@@ -9,9 +9,10 @@ import (
 	"testing"
 )
 
-// runRequests pipes a sequence of JSON-RPC requests through runMCP and parses
-// the per-line responses. It uses a fresh store backed by a temp file.
-func runRequests(t *testing.T, requests []map[string]any) []map[string]any {
+// runRequestsAll pipes a sequence of JSON-RPC requests through runMCP and
+// parses every per-line message — including server-emitted notifications,
+// which look like requests (no id, method set).
+func runRequestsAll(t *testing.T, requests []map[string]any) []map[string]any {
 	t.Helper()
 	store, err := openStoreAt(filepath.Join(t.TempDir(), "mcp.db"))
 	if err != nil {
@@ -33,7 +34,7 @@ func runRequests(t *testing.T, requests []map[string]any) []map[string]any {
 		t.Fatalf("runMCP: %v", err)
 	}
 
-	var resps []map[string]any
+	var msgs []map[string]any
 	for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
 		if line == "" {
 			continue
@@ -42,9 +43,24 @@ func runRequests(t *testing.T, requests []map[string]any) []map[string]any {
 		if err := json.Unmarshal([]byte(line), &m); err != nil {
 			t.Fatalf("unmarshal response %q: %v", line, err)
 		}
-		resps = append(resps, m)
+		msgs = append(msgs, m)
 	}
-	return resps
+	return msgs
+}
+
+// runRequests is the most common helper: it returns only the request/response
+// pairs, filtering out server-emitted notifications. Tests that want to
+// observe notifications use runRequestsAll directly.
+func runRequests(t *testing.T, requests []map[string]any) []map[string]any {
+	t.Helper()
+	all := runRequestsAll(t, requests)
+	out := make([]map[string]any, 0, len(all))
+	for _, m := range all {
+		if _, hasID := m["id"]; hasID {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func TestMCPInitializeAndToolsList(t *testing.T) {

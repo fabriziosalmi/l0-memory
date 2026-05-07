@@ -94,6 +94,13 @@ func (s *mcpServer) handle(req *rpcRequest) {
 			"protocolVersion": protocolVersion,
 			"capabilities": map[string]any{
 				"tools": map[string]any{},
+				// We declare resource support: pinned memories surface as
+				// memory://<scope>/<key> URIs and we notify the host when
+				// the pin set changes.
+				"resources": map[string]any{
+					"subscribe":   false,
+					"listChanged": true,
+				},
 			},
 			"serverInfo": map[string]any{
 				"name":    "l0-memory",
@@ -106,6 +113,10 @@ func (s *mcpServer) handle(req *rpcRequest) {
 		s.writeResult(req.ID, map[string]any{"tools": toolDefs()})
 	case "tools/call":
 		s.handleToolCall(req)
+	case "resources/list":
+		s.handleResourcesList(req)
+	case "resources/read":
+		s.handleResourcesRead(req)
 	case "ping":
 		s.writeResult(req.ID, map[string]any{})
 	default:
@@ -314,6 +325,11 @@ func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error)
 		if err != nil {
 			return nil, err
 		}
+		if ok {
+			// A deleted memory might have been pinned; cheapest correct
+			// behaviour is to always notify on a real delete.
+			s.notifyResourcesListChanged()
+		}
 		return map[string]any{"deleted": ok}, nil
 	case "memory_pin":
 		var a struct {
@@ -334,6 +350,7 @@ func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error)
 			}
 			return nil, err
 		}
+		s.notifyResourcesListChanged()
 		return CompactView(m), nil
 	case "memory_query":
 		var a struct {
