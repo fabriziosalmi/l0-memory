@@ -22,7 +22,7 @@ func extractScope(args []string) (string, []string) {
 
 func runCLI(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: ltm [--scope <name>] <list|get|search|query|save|delete|pin|unpin|link|unlink|links|traverse|path|version> [args...]")
+		return fmt.Errorf("usage: ltm [--scope <name>] <list|pinned|get|search|query|save|delete|pin|unpin|link|unlink|links|traverse|path|version> [args...]")
 	}
 
 	scope, args := extractScope(args)
@@ -57,6 +57,16 @@ func runCLI(args []string) error {
 			limit, _ = strconv.Atoi(rest[0])
 		}
 		ms, err := store.List(ctx, scope, limit)
+		if err != nil {
+			return err
+		}
+		return writeJSON(os.Stdout, ms)
+	case "pinned":
+		limit := 200
+		if len(rest) > 0 {
+			limit, _ = strconv.Atoi(rest[0])
+		}
+		ms, err := store.ListPinned(ctx, scope, limit)
 		if err != nil {
 			return err
 		}
