@@ -468,6 +468,181 @@ func TestSearchHitDoesNotCarryFullValue(t *testing.T) {
 	}
 }
 
+// --- Verify / Supersede / Origin / Archived (0.5 freshness) ---------------
+
+func TestVerifyUpdatesTimestamp(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if _, err := s.Save(ctx, "user", "fact", "stable", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(ctx, "user", "fact")
+	if got.VerifiedAt != 0 {
+		t.Fatalf("new memories should start at verified_at=0, got %d", got.VerifiedAt)
+	}
+	m, err := s.Verify(ctx, "user", "fact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.VerifiedAt == 0 {
+		t.Fatalf("verify should set verified_at, got %+v", m)
+	}
+}
+
+func TestVerifyNotFound(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.Verify(context.Background(), "user", "ghost"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestPinImpliesVerify(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "imp", "v", "")
+	m, _ := s.Pin(ctx, "user", "imp", true)
+	if m.VerifiedAt == 0 {
+		t.Errorf("pinning should imply verify, got verified_at=0")
+	}
+}
+
+func TestSaveWithOptionsRecordsOrigin(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	m, err := s.SaveWithOptions(ctx, "user", "k", "v", "", &SaveOptions{
+		Origin:      "session abc",
+		OriginAgent: "claude-code",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Origin != "claude-code: session abc" {
+		t.Errorf("expected combined origin, got %q", m.Origin)
+	}
+}
+
+func TestSaveOriginPreservedOnUpdateWhenEmpty(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.SaveWithOptions(ctx, "user", "k", "v1", "", &SaveOptions{Origin: "first"})
+	_, _ = s.Save(ctx, "user", "k", "v2", "")
+	m, _ := s.Get(ctx, "user", "k")
+	if m.Origin != "first" {
+		t.Errorf("origin should survive a no-origin update, got %q", m.Origin)
+	}
+}
+
+func TestSupersedeArchivesOldAndCreatesLink(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "old_view", "Old preference: X", "")
+	if _, err := s.Supersede(ctx, "user", "old_view", "new_view", "New preference: Y", ""); err != nil {
+		t.Fatal(err)
+	}
+	old, _ := s.Get(ctx, "user", "old_view")
+	if !old.Archived {
+		t.Errorf("old key should be archived after supersede, got %+v", old)
+	}
+	newM, _ := s.Get(ctx, "user", "new_view")
+	if newM.Archived {
+		t.Errorf("new key should not be archived")
+	}
+	links, _ := s.Links(ctx, "user", "new_view")
+	found := false
+	for _, l := range links {
+		if l.FromKey == "new_view" && l.ToKey == "old_view" && l.Rel == "supersedes" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("supersedes link missing: %+v", links)
+	}
+}
+
+func TestSupersedeRefusesIfNewExists(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "a", "v", "")
+	_, _ = s.Save(ctx, "user", "b", "v", "")
+	if _, err := s.Supersede(ctx, "user", "a", "b", "x", ""); err == nil {
+		t.Fatal("expected error: new_key already taken")
+	}
+}
+
+func TestArchivedHiddenFromListAndSearchByDefault(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "old", "stale fact", "")
+	_, _ = s.Supersede(ctx, "user", "old", "new", "fresh fact", "")
+
+	items, _ := s.List(ctx, "", 0)
+	for _, m := range items {
+		if m.Key == "old" {
+			t.Errorf("List should hide archived rows by default; got %v", m.Key)
+		}
+	}
+	hits, _ := s.Search(ctx, "", "stale", 0)
+	for _, h := range hits {
+		if h.Key == "old" {
+			t.Errorf("Search should hide archived rows; got %v", h.Key)
+		}
+	}
+	// But ListIncludingArchived returns it.
+	all, _ := s.ListIncludingArchived(ctx, "", 0)
+	hasOld := false
+	for _, m := range all {
+		if m.Key == "old" {
+			hasOld = true
+		}
+	}
+	if !hasOld {
+		t.Errorf("ListIncludingArchived should surface 'old'")
+	}
+}
+
+func TestMigrationFromPre05Schema(t *testing.T) {
+	dir := t.TempDir()
+	dbpath := filepath.Join(dir, "pre05.db")
+
+	// Build a v0.4-shape DB by hand: scope+pinned exist, but no archived /
+	// origin / verified_at columns.
+	old, err := sql.Open("sqlite", dbpath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`
+		CREATE TABLE memories (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			scope TEXT NOT NULL DEFAULT 'user',
+			key TEXT NOT NULL,
+			value TEXT NOT NULL,
+			tags TEXT NOT NULL DEFAULT '',
+			pinned INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(scope, key)
+		);
+		INSERT INTO memories (scope, key, value, tags, pinned, created_at, updated_at)
+		VALUES ('user', 'legacy', 'pre-0.5', 'migrate', 0, 1, 1);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	_ = old.Close()
+
+	s, err := openStoreAt(dbpath)
+	if err != nil {
+		t.Fatalf("open after migration: %v", err)
+	}
+	defer s.Close()
+	got, err := s.Get(context.Background(), "user", "legacy")
+	if err != nil {
+		t.Fatalf("legacy entry missing after migration: %v", err)
+	}
+	if got.VerifiedAt != 0 || got.Archived || got.Origin != "" {
+		t.Errorf("0.5 columns should default to zero/empty: %+v", got)
+	}
+}
+
 // --- Rename ----------------------------------------------------------------
 
 func TestRenameMovesKeyAndUpdatesLinks(t *testing.T) {

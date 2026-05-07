@@ -2,7 +2,7 @@
   "name": "l0-memory",
   "displayName": "l0-memory",
   "description": "Long-term memory for AI assistants. SQLite-backed memory store with MCP server and a VSCode UI to view/edit entries.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "fabriziosalmi",
   "license": "MIT",
   "repository": {
@@ -79,6 +79,16 @@
       {
         "command": "l0-memory.rename",
         "title": "l0-memory: Rename key…"
+      },
+      {
+        "command": "l0-memory.verify",
+        "title": "l0-memory: Verify (mark current)",
+        "icon": "$(check)"
+      },
+      {
+        "command": "l0-memory.supersede",
+        "title": "l0-memory: Supersede with new key…",
+        "icon": "$(replace)"
       },
       {
         "command": "l0-memory.deleteSelection",
@@ -182,6 +192,12 @@
         { "command": "l0-memory.openGraphFromHere",
           "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
           "group": "links@3" },
+        { "command": "l0-memory.verify",
+          "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
+          "group": "freshness@1" },
+        { "command": "l0-memory.supersede",
+          "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
+          "group": "freshness@2" },
         { "command": "l0-memory.rename",
           "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
           "group": "modify@1" },
