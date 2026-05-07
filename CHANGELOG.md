@@ -53,6 +53,21 @@ Cline, …).
   resources/read content + 404, list_changed notification, link CRUD,
   cascade on memory delete, traverse depth + cycle + cross-scope.
 
+### Fixed
+- **macOS provenance gate**: `make build`, the extension's
+  `scripts/build-bins.sh`, and the release workflow now apply an ad-hoc
+  `codesign` to every darwin output. Without this, macOS Sequoia/Tahoe
+  silently kills unsigned subprocesses spawned by signed apps (Claude
+  Desktop, Cursor) — manifest as `Server transport closed unexpectedly`
+  ~25 ms after start, with no log on stderr or stdout. See
+  SECURITY.md → "macOS provenance gate" for the manual workaround.
+
+### Added (debug)
+- `LTM_DEBUG=1` enables timestamped diagnostic lines on stderr.
+- `LTM_LOG_FILE=/path/to/log` mirrors them to a file (and implies
+  `LTM_DEBUG`). Useful for hosts that don't forward subprocess stderr to
+  their UI logs.
+
 ### Migration notes
 - Existing v0.1.x databases are upgraded transparently on first open of
   the new binary. The first start may take a fraction of a second on

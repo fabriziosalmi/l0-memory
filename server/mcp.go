@@ -11,7 +11,10 @@ import (
 	"sync"
 )
 
-// protocolVersion is the MCP version we declare; clients negotiate compatibility.
+// protocolVersion is the MCP version we declare when the client doesn't send
+// one. When the client does (it should), we echo their value back: hosts vary
+// in how strictly they handle version negotiation, and our surface (tools +
+// basic resources) is identical across recent dated revisions.
 const protocolVersion = "2025-06-18"
 
 type rpcRequest struct {
@@ -42,28 +45,42 @@ type mcpServer struct {
 }
 
 func runMCP(ctx context.Context, store *Store, in io.Reader, out io.Writer) error {
+	debugf("runMCP starting (version=%s)", Version)
+	defer debugf("runMCP returning")
 	s := &mcpServer{store: store, out: out, ctx: ctx}
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
 	for scanner.Scan() {
 		if ctx.Err() != nil {
+			debugf("ctx cancelled, exiting loop")
 			return nil
 		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
+		debugf("← %s", truncateForLog(line, 240))
 		var req rpcRequest
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
+			debugf("parse error: %v", err)
 			s.writeError(nil, -32700, "parse error: "+err.Error())
 			continue
 		}
 		s.handle(&req)
 	}
 	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
+		debugf("scanner error: %v", err)
 		return err
 	}
+	debugf("stdin closed (EOF)")
 	return nil
+}
+
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 func (s *mcpServer) write(v any) {
@@ -90,13 +107,24 @@ func (s *mcpServer) handle(req *rpcRequest) {
 
 	switch req.Method {
 	case "initialize":
+		// Echo the client's protocolVersion when present; fall back to ours.
+		// Some hosts (Claude Desktop ≥ 0.1.0) close the transport if the
+		// server replies with a different revision than the one they
+		// announced.
+		negotiated := protocolVersion
+		if len(req.Params) > 0 {
+			var p struct {
+				ProtocolVersion string `json:"protocolVersion"`
+			}
+			if err := json.Unmarshal(req.Params, &p); err == nil && p.ProtocolVersion != "" {
+				negotiated = p.ProtocolVersion
+			}
+		}
+		debugf("initialize negotiated=%s", negotiated)
 		s.writeResult(req.ID, map[string]any{
-			"protocolVersion": protocolVersion,
+			"protocolVersion": negotiated,
 			"capabilities": map[string]any{
 				"tools": map[string]any{},
-				// We declare resource support: pinned memories surface as
-				// memory://<scope>/<key> URIs and we notify the host when
-				// the pin set changes.
 				"resources": map[string]any{
 					"subscribe":   false,
 					"listChanged": true,
