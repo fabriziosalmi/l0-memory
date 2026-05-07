@@ -10,6 +10,9 @@ interface Memory {
   value: string;
   tags: string;
   pinned: boolean;
+  archived?: boolean;
+  origin?: string;
+  verified_at?: number;
   created_at: number;
   updated_at: number;
 }
@@ -124,6 +127,8 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("l0-memory.sortBy", () => pickSortMode()),
     vscode.commands.registerCommand("l0-memory.edit", (item: MemoryItem) => editMemory(context, item)),
     vscode.commands.registerCommand("l0-memory.rename", (item: MemoryItem) => renameMemory(context, item)),
+    vscode.commands.registerCommand("l0-memory.verify", (item: MemoryItem) => verifyMemory(context, item)),
+    vscode.commands.registerCommand("l0-memory.supersede", (item: MemoryItem) => supersedeMemory(context, item)),
     vscode.commands.registerCommand("l0-memory.openInEditor", (item: MemoryItem) => openMemoryInEditor(item)),
     vscode.commands.registerCommand("l0-memory.delete", (item: MemoryItem) => deleteMemory(context, item)),
     vscode.commands.registerCommand("l0-memory.deleteSelection", () => deleteSelection(context)),
@@ -321,6 +326,46 @@ async function editMemory(context: vscode.ExtensionContext, item: MemoryItem) {
     const err = e as Error;
     if (err instanceof BinaryNotFoundError) return notifyBinaryMissing(err.message);
     vscode.window.showErrorMessage(`Edit failed: ${err.message}`);
+  }
+}
+
+async function verifyMemory(context: vscode.ExtensionContext, item: MemoryItem) {
+  if (!item || !item.memory) return;
+  const m = item.memory;
+  try {
+    await runLTM(context, ["--scope", m.scope, "verify", m.key]);
+    refreshAllViews();
+    vscode.window.showInformationMessage(`Verified '${m.key}' as current.`);
+  } catch (e: unknown) {
+    const err = e as Error;
+    if (err instanceof BinaryNotFoundError) return notifyBinaryMissing(err.message);
+    vscode.window.showErrorMessage(`Verify failed: ${err.message}`);
+  }
+}
+
+async function supersedeMemory(context: vscode.ExtensionContext, item: MemoryItem) {
+  if (!item || !item.memory) return;
+  const m = item.memory;
+  const newKey = await vscode.window.showInputBox({
+    prompt: `Supersede '${m.key}' — new key`,
+    placeHolder: "the replacement memory's key",
+    validateInput: (v) => (v.trim() && v.trim() !== m.key ? null : "Required, must differ from old key"),
+  });
+  if (!newKey) return;
+  const newValue = await vscode.window.showInputBox({
+    prompt: `Supersede '${m.key}' — new value (replacement content)`,
+    value: m.value,
+  });
+  if (newValue === undefined) return;
+  const tags = (await vscode.window.showInputBox({ prompt: "Tags for the new memory", value: m.tags })) || "";
+  try {
+    await runLTM(context, ["--scope", m.scope, "supersede", m.key, newKey.trim(), "-", tags], newValue);
+    refreshAllViews();
+    vscode.window.showInformationMessage(`Superseded '${m.key}' → '${newKey.trim()}' (old archived).`);
+  } catch (e: unknown) {
+    const err = e as Error;
+    if (err instanceof BinaryNotFoundError) return notifyBinaryMissing(err.message);
+    vscode.window.showErrorMessage(`Supersede failed: ${err.message}`);
   }
 }
 
@@ -994,12 +1039,24 @@ class MemoryItem extends vscode.TreeItem {
     item.description = m.tags ? `[${m.tags}] ${preview}` : preview;
 
     const ts = formatTimestamp(m.updated_at);
+    const verifyLine = (() => {
+      if (!m.verified_at || m.verified_at <= 0) return "_verified:_ never  \n";
+      const ageMs = Date.now() - (m.verified_at < 1e12 ? m.verified_at * 1000 : m.verified_at);
+      const days = Math.floor(ageMs / (1000 * 60 * 60 * 24));
+      const fresh = days <= 7 ? "fresh" : days <= 30 ? "" : "🟡 stale";
+      return `_verified:_ ${formatTimestamp(m.verified_at)} (${days}d ago${fresh ? `, ${fresh}` : ""})  \n`;
+    })();
+    const originLine = m.origin ? `_origin:_ ${m.origin}  \n` : "";
+    const archivedLine = m.archived ? `_archived:_ yes  \n` : "";
     item.tooltip = new vscode.MarkdownString(
-      `**${label}**${m.pinned ? "  📌" : ""}\n\n` +
+      `**${label}**${m.pinned ? "  📌" : ""}${m.archived ? "  🗄️" : ""}\n\n` +
         `${m.value.length > 400 ? m.value.slice(0, 400) + "…" : m.value}\n\n` +
         `_scope:_ ${m.scope || "user"}  \n` +
         `_tags:_ ${m.tags || "—"}  \n` +
         `_pinned:_ ${m.pinned ? "yes" : "no"}  \n` +
+        archivedLine +
+        verifyLine +
+        originLine +
         `_size:_ ${m.value.length} bytes  \n` +
         `_updated:_ ${ts}`,
     );

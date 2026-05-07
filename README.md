@@ -102,6 +102,8 @@ config snippet (host-agnostic):
 | `memory_links`    | `scope?`, `key`                             | List every link incident to a memory |
 | `memory_traverse` | `scope?`, `key`, `depth?`, `rel?`, `direction?` | BFS subgraph view |
 | `memory_rename`   | `scope?`, `old_key`, `new_key`              | Rename a key atomically; cascades through links |
+| `memory_verify`   | `scope?`, `key`                             | Mark a memory as freshly confirmed (`verified_at = now`) |
+| `memory_supersede`| `scope?`, `old_key`, `new_key`, `value`, `tags?` | Replace a memory: archive the old, create the new, link `supersedes` |
 
 Pinned memories are also exposed as **MCP resources** at
 `memory:///<scope>/<key>` so an MCP host can attach them to context with no
@@ -138,6 +140,8 @@ ltm query <key> [path]                        # JSON Pointer + '*' wildcard slic
 ltm save <key> <value|-> [tags]               # value of "-" reads from stdin
 ltm delete <key>
 ltm rename <old_key> <new_key>                # cascades through links
+ltm verify <key>                              # mark "still current" (verified_at = now)
+ltm supersede <old> <new> <value|-> [tags]    # replace: archive old, create new, link 'supersedes'
 ltm pin <key>                                 # toggle pin on
 ltm unpin <key>                               # toggle pin off
 ltm link <from_key> <rel> <to_key>            # same-scope edge

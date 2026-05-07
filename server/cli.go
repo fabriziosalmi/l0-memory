@@ -22,7 +22,7 @@ func extractScope(args []string) (string, []string) {
 
 func runCLI(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: ltm [--scope <name>] <list|pinned|get|search|query|save|delete|rename|pin|unpin|link|unlink|links|traverse|path|version> [args...]")
+		return fmt.Errorf("usage: ltm [--scope <name>] <list|pinned|get|search|query|save|delete|rename|verify|supersede|pin|unpin|link|unlink|links|traverse|path|version> [args...]")
 	}
 
 	scope, args := extractScope(args)
@@ -131,6 +131,43 @@ func runCLI(args []string) error {
 			return fmt.Errorf("usage: ltm [--scope <name>] rename <old_key> <new_key>")
 		}
 		m, err := store.Rename(ctx, scope, rest[0], rest[1])
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return writeJSON(os.Stdout, map[string]any{"found": false})
+			}
+			return err
+		}
+		return writeJSON(os.Stdout, m)
+	case "verify":
+		if len(rest) < 1 {
+			return fmt.Errorf("usage: ltm [--scope <name>] verify <key>")
+		}
+		m, err := store.Verify(ctx, scope, rest[0])
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return writeJSON(os.Stdout, map[string]any{"found": false})
+			}
+			return err
+		}
+		return writeJSON(os.Stdout, m)
+	case "supersede":
+		// ltm supersede <old_key> <new_key> <value|-> [tags]
+		if len(rest) < 3 {
+			return fmt.Errorf("usage: ltm [--scope <name>] supersede <old_key> <new_key> <value|-> [tags]")
+		}
+		oldKey, newKey, value := rest[0], rest[1], rest[2]
+		if value == "-" {
+			b, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return err
+			}
+			value = string(b)
+		}
+		tags := ""
+		if len(rest) > 3 {
+			tags = rest[3]
+		}
+		m, err := store.Supersede(ctx, scope, oldKey, newKey, value, tags)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				return writeJSON(os.Stdout, map[string]any{"found": false})

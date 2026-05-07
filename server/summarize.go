@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -17,10 +18,22 @@ func CompactView(m *Memory) map[string]any {
 		"key":        m.Key,
 		"tags":       m.Tags,
 		"pinned":     m.Pinned,
+		"archived":   m.Archived,
 		"created_at": m.CreatedAt,
 		"updated_at": m.UpdatedAt,
 		"size_bytes": len(m.Value),
 		"compact":    true,
+	}
+	if m.Origin != "" {
+		out["origin"] = m.Origin
+	}
+	if m.VerifiedAt > 0 {
+		out["verified_at"] = m.VerifiedAt
+		// staleness_days: how long since the user last said "this is still
+		// current". Hosts can use it to decide whether to attach the memory
+		// to context unconditionally or to flag it.
+		ageMs := time.Now().UnixMilli() - m.VerifiedAt
+		out["staleness_days"] = ageMs / (1000 * 60 * 60 * 24)
 	}
 	if json.Valid([]byte(m.Value)) && looksLikeJSONStructure(m.Value) {
 		out["is_json"] = true

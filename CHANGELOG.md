@@ -4,6 +4,67 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-05-07
+
+Freshness signals + provenance + supersession. Targets the "AI cites
+stale facts with confidence" failure mode by giving each memory a
+last-verified timestamp and a clean way to retire old beliefs.
+
+### Added — schema (additive, no rebuild)
+- `verified_at INTEGER NOT NULL DEFAULT 0` — timestamp of the last
+  user-confirmed "this is still current". `0` means "never verified".
+- `archived INTEGER NOT NULL DEFAULT 0` — soft-delete flag. Archived
+  rows stay queryable but are hidden from `memory_list`/`memory_search`
+  by default; the graph keeps the historical edges.
+- `origin TEXT NOT NULL DEFAULT ''` — free-form provenance hint
+  (e.g. `claude-code: session abc`). Set at save time, preserved on
+  later updates that don't supply a new value.
+- Migration is plain `ALTER TABLE ADD COLUMN` for v0.4 → v0.5; no
+  table rebuild required.
+
+### Added — Store API
+- `Verify(scope, key)` updates `verified_at = now`. Returns `ErrNotFound`
+  when missing.
+- `SaveWithOptions(scope, key, value, tags, *SaveOptions)` accepts
+  `Origin` and `OriginAgent` (combined as `"<agent>: <origin>"` when
+  both are set). The legacy `Save(...)` keeps existing call sites
+  working.
+- `Supersede(scope, oldKey, newKey, value, tags)` is the canonical way
+  to retire a belief: it creates the new memory, archives the old, and
+  links new `--supersedes→` old in a single transaction.
+- `Pin(...)` now implies `Verify(...)` — pinning is the user telling
+  the system "this is still current" by definition.
+- `List(...)` / `Search(...)` filter out archived rows. New
+  `ListIncludingArchived(...)` for explicit "show me history" queries.
+
+### Added — MCP tools
+- `memory_verify {scope?, key}` — calls Verify; compact view returned.
+- `memory_supersede {scope?, old_key, new_key, value, tags?}` — atomic
+  swap; emits `notifications/resources/list_changed`.
+- `memory_save` accepts optional `origin` and `origin_agent`.
+- Compact view (`memory_get`, `memory_search` hits) now exposes
+  `verified_at`, `staleness_days`, `origin`, `archived`.
+
+### Added — CLI
+- `ltm [--scope X] verify <key>`
+- `ltm [--scope X] supersede <old> <new> <value|-> [tags]`
+
+### Added — VSCode extension
+- New context actions per memory: **Verify (mark current)** and
+  **Supersede with new key…** (the latter prompts for new key, value
+  pre-filled with the old one, and tags).
+- Tooltip now shows `_verified:_` (or "never"), age in days with a
+  staleness flag (`fresh` ≤ 7d, `🟡 stale` > 30d), `_origin:_`, and
+  an `🗄️` marker on archived items.
+- Bumped extension `0.4.0` → `0.5.0`.
+
+### Tests
+- 94/94 green under `-race`. New: verify-updates-timestamp, verify-not-
+  found, pin-implies-verify, save-with-origin, origin-preserved-on-noop-
+  update, supersede-archives-and-links, supersede-refuses-collision,
+  archived-hidden-from-list-and-search-by-default, migration v0.4 → v0.5
+  with new columns defaulting to zero/empty.
+
 ## [0.4.0] - 2026-05-07
 
 Tree polish + rename + power-user UX. Server adds one new operation

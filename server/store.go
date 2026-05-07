@@ -19,30 +19,36 @@ import (
 const DefaultScope = "user"
 
 type Memory struct {
-	ID        int64  `json:"id"`
-	Scope     string `json:"scope"`
-	Key       string `json:"key"`
-	Value     string `json:"value"`
-	Tags      string `json:"tags"`
-	Pinned    bool   `json:"pinned"`
-	CreatedAt int64  `json:"created_at"`
-	UpdatedAt int64  `json:"updated_at"`
+	ID         int64  `json:"id"`
+	Scope      string `json:"scope"`
+	Key        string `json:"key"`
+	Value      string `json:"value"`
+	Tags       string `json:"tags"`
+	Pinned     bool   `json:"pinned"`
+	Archived   bool   `json:"archived"`
+	Origin     string `json:"origin,omitempty"`
+	VerifiedAt int64  `json:"verified_at"` // 0 means "never verified"
+	CreatedAt  int64  `json:"created_at"`
+	UpdatedAt  int64  `json:"updated_at"`
 }
 
 // SearchHit is the compact result of a search: enough metadata for the
 // caller to decide whether to load the full record, plus a contextual
 // snippet so the value is usually unnecessary.
 type SearchHit struct {
-	ID        int64   `json:"id"`
-	Scope     string  `json:"scope"`
-	Key       string  `json:"key"`
-	Tags      string  `json:"tags"`
-	Pinned    bool    `json:"pinned"`
-	Score     float64 `json:"score"`
-	Snippet   string  `json:"snippet"`
-	SizeBytes int     `json:"size_bytes"`
-	CreatedAt int64   `json:"created_at"`
-	UpdatedAt int64   `json:"updated_at"`
+	ID         int64   `json:"id"`
+	Scope      string  `json:"scope"`
+	Key        string  `json:"key"`
+	Tags       string  `json:"tags"`
+	Pinned     bool    `json:"pinned"`
+	Archived   bool    `json:"archived"`
+	Origin     string  `json:"origin,omitempty"`
+	VerifiedAt int64   `json:"verified_at"`
+	Score      float64 `json:"score"`
+	Snippet    string  `json:"snippet"`
+	SizeBytes  int     `json:"size_bytes"`
+	CreatedAt  int64   `json:"created_at"`
+	UpdatedAt  int64   `json:"updated_at"`
 }
 
 type Store struct {
@@ -94,14 +100,17 @@ func openStoreAt(path string) (*Store, error) {
 	//    step 3, after migration, when the columns are guaranteed to exist.
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS memories (
-			id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			scope      TEXT NOT NULL DEFAULT 'user',
-			key        TEXT NOT NULL,
-			value      TEXT NOT NULL,
-			tags       TEXT NOT NULL DEFAULT '',
-			pinned     INTEGER NOT NULL DEFAULT 0,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			scope       TEXT NOT NULL DEFAULT 'user',
+			key         TEXT NOT NULL,
+			value       TEXT NOT NULL,
+			tags        TEXT NOT NULL DEFAULT '',
+			pinned      INTEGER NOT NULL DEFAULT 0,
+			archived    INTEGER NOT NULL DEFAULT 0,
+			origin      TEXT NOT NULL DEFAULT '',
+			verified_at INTEGER NOT NULL DEFAULT 0,
+			created_at  INTEGER NOT NULL,
+			updated_at  INTEGER NOT NULL,
 			UNIQUE(scope, key)
 		);
 		CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -149,16 +158,67 @@ func openStoreAt(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-// migrateSchema upgrades pre-0.2 databases (no scope/pinned columns) to the
-// current schema. Idempotent: a no-op once the columns are present.
+// migrateSchema upgrades pre-0.2 / pre-0.5 databases to the current schema.
+// Idempotent: a no-op once the columns are already in place.
 func migrateSchema(db *sql.DB) error {
-	hasScope, hasPinned, err := tableHasColumns(db, "memories", "scope", "pinned")
+	cols, err := columnSet(db, "memories")
 	if err != nil {
 		return err
 	}
-	if hasScope && hasPinned {
-		return nil
+
+	// 0.2 migration: scope+pinned. Requires UNIQUE constraint change so we
+	// rebuild the table.
+	if !(cols["scope"] && cols["pinned"]) {
+		if err := migrateTo02(db); err != nil {
+			return err
+		}
+		// Refresh column set after rebuild.
+		cols, err = columnSet(db, "memories")
+		if err != nil {
+			return err
+		}
 	}
+
+	// 0.5 additive migration: archived + origin + verified_at. Plain ALTER
+	// TABLE ADD COLUMN — no rebuild because no UNIQUE constraint changes.
+	type addCol struct{ name, ddl string }
+	adds := []addCol{
+		{"archived", "ALTER TABLE memories ADD COLUMN archived INTEGER NOT NULL DEFAULT 0"},
+		{"origin", "ALTER TABLE memories ADD COLUMN origin TEXT NOT NULL DEFAULT ''"},
+		{"verified_at", "ALTER TABLE memories ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, a := range adds {
+		if cols[a.name] {
+			continue
+		}
+		if _, err := db.Exec(a.ddl); err != nil {
+			return fmt.Errorf("add column %q: %w", a.name, err)
+		}
+	}
+	return nil
+}
+
+func columnSet(db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%q)`, table))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	have := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return nil, err
+		}
+		have[name] = true
+	}
+	return have, rows.Err()
+}
+
+func migrateTo02(db *sql.DB) error {
 
 	// SQLite cannot change a UNIQUE constraint with ALTER, so we rebuild.
 	// The new memories table got created by the openStoreAt schema; if it
@@ -214,32 +274,6 @@ func migrateSchema(db *sql.DB) error {
 	return tx.Commit()
 }
 
-func tableHasColumns(db *sql.DB, table string, want ...string) (bool, bool, error) {
-	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%q)`, table))
-	if err != nil {
-		return false, false, err
-	}
-	defer rows.Close()
-	have := map[string]bool{}
-	for rows.Next() {
-		var cid int
-		var name, ctype string
-		var notnull, pk int
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return false, false, err
-		}
-		have[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return false, false, err
-	}
-	if len(want) != 2 {
-		return false, false, fmt.Errorf("tableHasColumns expects exactly 2 columns to check")
-	}
-	return have[want[0]], have[want[1]], nil
-}
-
 func backfillFTS(db *sql.DB) error {
 	var memCount, ftsCount int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM memories`).Scan(&memCount); err != nil {
@@ -272,21 +306,49 @@ func resolveScope(scope string) string {
 	return scope
 }
 
+// SaveOptions carries optional fields for Save. Pass nil for the legacy
+// no-extras call. Origin is a free-form provenance hint; origin_agent is
+// who wrote the memory ("claude-code", "claude-desktop", "cursor", "cli", …).
+type SaveOptions struct {
+	Origin      string
+	OriginAgent string
+}
+
 func (s *Store) Save(ctx context.Context, scope, key, value, tags string) (*Memory, error) {
+	return s.SaveWithOptions(ctx, scope, key, value, tags, nil)
+}
+
+// SaveWithOptions is Save with optional provenance metadata. When opts.Origin
+// or opts.OriginAgent is non-empty the stored origin field becomes
+// "<origin_agent>: <origin>" / one of the two halves; existing origin is
+// preserved on UPDATE if both incoming values are empty.
+func (s *Store) SaveWithOptions(ctx context.Context, scope, key, value, tags string, opts *SaveOptions) (*Memory, error) {
 	scope = resolveScope(scope)
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return nil, fmt.Errorf("key is required")
 	}
 	now := time.Now().UnixMilli()
+	origin := ""
+	if opts != nil {
+		switch {
+		case opts.OriginAgent != "" && opts.Origin != "":
+			origin = opts.OriginAgent + ": " + opts.Origin
+		case opts.OriginAgent != "":
+			origin = opts.OriginAgent
+		case opts.Origin != "":
+			origin = opts.Origin
+		}
+	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO memories (scope, key, value, tags, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO memories (scope, key, value, tags, origin, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(scope, key) DO UPDATE SET
 			value = excluded.value,
 			tags = excluded.tags,
+			origin = CASE WHEN excluded.origin <> '' THEN excluded.origin ELSE memories.origin END,
 			updated_at = excluded.updated_at
-	`, scope, key, value, tags, now, now)
+	`, scope, key, value, tags, origin, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -295,11 +357,7 @@ func (s *Store) Save(ctx context.Context, scope, key, value, tags string) (*Memo
 
 func (s *Store) Get(ctx context.Context, scope, key string) (*Memory, error) {
 	scope = resolveScope(scope)
-	row := s.db.QueryRowContext(ctx, `
-		SELECT id, scope, key, value, tags, pinned, created_at, updated_at
-		FROM memories
-		WHERE scope = ? AND key = ?
-	`, scope, key)
+	row := s.db.QueryRowContext(ctx, `SELECT `+memoryColumns+` FROM memories WHERE scope = ? AND key = ?`, scope, key)
 	return scanMemory(row)
 }
 
@@ -391,13 +449,23 @@ func (s *Store) Rename(ctx context.Context, scope, oldKey, newKey string) (*Memo
 }
 
 // Pin sets the pinned flag on a memory. Returns the updated record.
+// Pinning implies a verify (the user has just confirmed this is current).
 func (s *Store) Pin(ctx context.Context, scope, key string, pinned bool) (*Memory, error) {
 	scope = resolveScope(scope)
 	now := time.Now().UnixMilli()
-	res, err := s.db.ExecContext(ctx, `
-		UPDATE memories SET pinned = ?, updated_at = ?
-		WHERE scope = ? AND key = ?
-	`, boolToInt(pinned), now, scope, key)
+	var res sql.Result
+	var err error
+	if pinned {
+		res, err = s.db.ExecContext(ctx, `
+			UPDATE memories SET pinned = 1, verified_at = ?, updated_at = ?
+			WHERE scope = ? AND key = ?
+		`, now, now, scope, key)
+	} else {
+		res, err = s.db.ExecContext(ctx, `
+			UPDATE memories SET pinned = 0, updated_at = ?
+			WHERE scope = ? AND key = ?
+		`, now, scope, key)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -408,19 +476,114 @@ func (s *Store) Pin(ctx context.Context, scope, key string, pinned bool) (*Memor
 	return s.Get(ctx, scope, key)
 }
 
-// List returns memories sorted by pinned DESC, updated_at DESC. An empty
-// scope means "all scopes".
+// Verify marks a memory as freshly confirmed by the user. The verified_at
+// timestamp is used to compute staleness signals in compact views.
+func (s *Store) Verify(ctx context.Context, scope, key string) (*Memory, error) {
+	scope = resolveScope(scope)
+	now := time.Now().UnixMilli()
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE memories SET verified_at = ? WHERE scope = ? AND key = ?
+	`, now, scope, key)
+	if err != nil {
+		return nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, ErrNotFound
+	}
+	return s.Get(ctx, scope, key)
+}
+
+// Supersede archives an old memory and creates a new one in its place,
+// linking new --supersedes--> old. The old memory is kept (archived) so
+// historical references stay valid; list/search hide it by default.
+func (s *Store) Supersede(ctx context.Context, scope, oldKey, newKey, value, tags string) (*Memory, error) {
+	scope = resolveScope(scope)
+	oldKey = strings.TrimSpace(oldKey)
+	newKey = strings.TrimSpace(newKey)
+	if oldKey == "" || newKey == "" {
+		return nil, fmt.Errorf("old and new keys are required")
+	}
+	if oldKey == newKey {
+		return nil, fmt.Errorf("supersede requires a new key distinct from the old one")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Old must exist and not already be archived.
+	var oldID int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id FROM memories WHERE scope = ? AND key = ?`, scope, oldKey,
+	).Scan(&oldID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	// New must not exist.
+	var dst int64
+	err = tx.QueryRowContext(ctx,
+		`SELECT id FROM memories WHERE scope = ? AND key = ?`, scope, newKey,
+	).Scan(&dst)
+	if err == nil {
+		return nil, fmt.Errorf("memory %q already exists in scope %q", newKey, scope)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
+	now := time.Now().UnixMilli()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO memories (scope, key, value, tags, verified_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, scope, newKey, value, tags, now, now, now); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE memories SET archived = 1, updated_at = ? WHERE scope = ? AND key = ?
+	`, now, scope, oldKey); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT OR IGNORE INTO memory_links
+			(from_scope, from_key, to_scope, to_key, rel, created_at)
+		VALUES (?, ?, ?, ?, 'supersedes', ?)
+	`, scope, newKey, scope, oldKey, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, scope, newKey)
+}
+
+// List returns active (non-archived) memories sorted by pinned DESC,
+// updated_at DESC. An empty scope means "all scopes". Pass includeArchived
+// to also surface archived rows (last by default ordering).
 func (s *Store) List(ctx context.Context, scope string, limit int) ([]Memory, error) {
+	return s.listWithFlags(ctx, scope, limit, false)
+}
+
+func (s *Store) ListIncludingArchived(ctx context.Context, scope string, limit int) ([]Memory, error) {
+	return s.listWithFlags(ctx, scope, limit, true)
+}
+
+func (s *Store) listWithFlags(ctx context.Context, scope string, limit int, includeArchived bool) ([]Memory, error) {
 	if limit <= 0 {
 		limit = 200
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, scope, key, value, tags, pinned, created_at, updated_at
+		SELECT `+memoryColumns+`
 		FROM memories
 		WHERE (?1 = '' OR scope = ?1)
-		ORDER BY pinned DESC, updated_at DESC, id DESC
-		LIMIT ?2
-	`, scope, limit)
+		  AND (?2 = 1 OR archived = 0)
+		ORDER BY archived ASC, pinned DESC, updated_at DESC, id DESC
+		LIMIT ?3
+	`, scope, boolToInt(includeArchived), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -428,17 +591,17 @@ func (s *Store) List(ctx context.Context, scope string, limit int) ([]Memory, er
 	return scanMemories(rows)
 }
 
-// ListPinned is List filtered to pinned=1. Equivalent to a list query with a
-// scope filter plus a pinned filter; offered as a separate method because
-// the MCP resources/list path needs it on the hot path.
+// ListPinned is List filtered to pinned=1. Pinned memories are never
+// archived (a successor never inherits the pin), so this query implicitly
+// excludes archived rows.
 func (s *Store) ListPinned(ctx context.Context, scope string, limit int) ([]Memory, error) {
 	if limit <= 0 {
 		limit = 200
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, scope, key, value, tags, pinned, created_at, updated_at
+		SELECT `+memoryColumns+`
 		FROM memories
-		WHERE pinned = 1
+		WHERE pinned = 1 AND archived = 0
 		  AND (?1 = '' OR scope = ?1)
 		ORDER BY updated_at DESC, id DESC
 		LIMIT ?2
@@ -527,7 +690,7 @@ func (s *Store) SearchExpanded(ctx context.Context, scope, query string, limit i
 func (s *Store) searchFTSCompact(ctx context.Context, scope, expr string, limit int) ([]SearchHit, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
-			m.id, m.scope, m.key, m.tags, m.pinned,
+			m.id, m.scope, m.key, m.tags, m.pinned, m.archived, m.origin, m.verified_at,
 			-bm25(memories_fts) AS score,
 			snippet(memories_fts, -1, '<<', '>>', '...', 12) AS snip,
 			length(CAST(m.value AS BLOB)) AS size_bytes,
@@ -536,6 +699,7 @@ func (s *Store) searchFTSCompact(ctx context.Context, scope, expr string, limit 
 		JOIN memories m ON m.id = f.rowid
 		WHERE memories_fts MATCH ?1
 		  AND (?2 = '' OR m.scope = ?2)
+		  AND m.archived = 0
 		ORDER BY f.rank, m.updated_at DESC, m.id DESC
 		LIMIT ?3
 	`, expr, scope, limit)
@@ -546,11 +710,13 @@ func (s *Store) searchFTSCompact(ctx context.Context, scope, expr string, limit 
 	out := []SearchHit{}
 	for rows.Next() {
 		var h SearchHit
-		var pinnedInt int
-		if err := rows.Scan(&h.ID, &h.Scope, &h.Key, &h.Tags, &pinnedInt, &h.Score, &h.Snippet, &h.SizeBytes, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		var pinnedInt, archivedInt int
+		if err := rows.Scan(&h.ID, &h.Scope, &h.Key, &h.Tags, &pinnedInt, &archivedInt, &h.Origin, &h.VerifiedAt,
+			&h.Score, &h.Snippet, &h.SizeBytes, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		h.Pinned = pinnedInt != 0
+		h.Archived = archivedInt != 0
 		out = append(out, h)
 	}
 	return out, rows.Err()
@@ -558,11 +724,12 @@ func (s *Store) searchFTSCompact(ctx context.Context, scope, expr string, limit 
 
 func (s *Store) searchFTSExpanded(ctx context.Context, scope, expr string, limit int) ([]Memory, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT m.id, m.scope, m.key, m.value, m.tags, m.pinned, m.created_at, m.updated_at
+		SELECT `+prefixColumns("m", memoryColumns)+`
 		FROM memories_fts f
 		JOIN memories m ON m.id = f.rowid
 		WHERE memories_fts MATCH ?1
 		  AND (?2 = '' OR m.scope = ?2)
+		  AND m.archived = 0
 		ORDER BY f.rank, m.updated_at DESC, m.id DESC
 		LIMIT ?3
 	`, expr, scope, limit)
@@ -573,6 +740,15 @@ func (s *Store) searchFTSExpanded(ctx context.Context, scope, expr string, limit
 	return scanMemories(rows)
 }
 
+// prefixColumns turns "id, scope, key" into "m.id, m.scope, m.key".
+func prefixColumns(alias, cols string) string {
+	parts := strings.Split(cols, ",")
+	for i, p := range parts {
+		parts[i] = " " + alias + "." + strings.TrimSpace(p)
+	}
+	return strings.TrimLeft(strings.Join(parts, ","), " ")
+}
+
 func (s *Store) searchLikeCompact(ctx context.Context, scope, query string, limit int) ([]SearchHit, error) {
 	full, err := s.searchLikeExpanded(ctx, scope, query, limit)
 	if err != nil {
@@ -581,16 +757,19 @@ func (s *Store) searchLikeCompact(ctx context.Context, scope, query string, limi
 	out := make([]SearchHit, len(full))
 	for i, m := range full {
 		out[i] = SearchHit{
-			ID:        m.ID,
-			Scope:     m.Scope,
-			Key:       m.Key,
-			Tags:      m.Tags,
-			Pinned:    m.Pinned,
-			Score:     0,
-			Snippet:   makeLikeSnippet(query, m, 100),
-			SizeBytes: len(m.Value),
-			CreatedAt: m.CreatedAt,
-			UpdatedAt: m.UpdatedAt,
+			ID:         m.ID,
+			Scope:      m.Scope,
+			Key:        m.Key,
+			Tags:       m.Tags,
+			Pinned:     m.Pinned,
+			Archived:   m.Archived,
+			Origin:     m.Origin,
+			VerifiedAt: m.VerifiedAt,
+			Score:      0,
+			Snippet:    makeLikeSnippet(query, m, 100),
+			SizeBytes:  len(m.Value),
+			CreatedAt:  m.CreatedAt,
+			UpdatedAt:  m.UpdatedAt,
 		}
 	}
 	return out, nil
@@ -599,12 +778,13 @@ func (s *Store) searchLikeCompact(ctx context.Context, scope, query string, limi
 func (s *Store) searchLikeExpanded(ctx context.Context, scope, query string, limit int) ([]Memory, error) {
 	q := "%" + strings.ToLower(escapeLike(query)) + "%"
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, scope, key, value, tags, pinned, created_at, updated_at
+		SELECT `+memoryColumns+`
 		FROM memories
 		WHERE (LOWER(key) LIKE ?1 ESCAPE '\'
 		   OR LOWER(value) LIKE ?1 ESCAPE '\'
 		   OR LOWER(tags) LIKE ?1 ESCAPE '\')
 		  AND (?2 = '' OR scope = ?2)
+		  AND archived = 0
 		ORDER BY updated_at DESC, id DESC
 		LIMIT ?3
 	`, q, scope, limit)
@@ -667,6 +847,9 @@ func (s *Store) Count(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// memoryColumns is the canonical column list for SELECT memories.
+const memoryColumns = "id, scope, key, value, tags, pinned, archived, origin, verified_at, created_at, updated_at"
+
 // scanMemory works for QueryRow*-style scans.
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -674,14 +857,18 @@ type rowScanner interface {
 
 func scanMemory(row rowScanner) (*Memory, error) {
 	var m Memory
-	var pinnedInt int
-	if err := row.Scan(&m.ID, &m.Scope, &m.Key, &m.Value, &m.Tags, &pinnedInt, &m.CreatedAt, &m.UpdatedAt); err != nil {
+	var pinnedInt, archivedInt int
+	if err := row.Scan(&m.ID, &m.Scope, &m.Key, &m.Value, &m.Tags,
+		&pinnedInt, &archivedInt, &m.Origin, &m.VerifiedAt,
+		&m.CreatedAt, &m.UpdatedAt,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	m.Pinned = pinnedInt != 0
+	m.Archived = archivedInt != 0
 	return &m, nil
 }
 
@@ -689,11 +876,15 @@ func scanMemories(rows *sql.Rows) ([]Memory, error) {
 	out := []Memory{}
 	for rows.Next() {
 		var m Memory
-		var pinnedInt int
-		if err := rows.Scan(&m.ID, &m.Scope, &m.Key, &m.Value, &m.Tags, &pinnedInt, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		var pinnedInt, archivedInt int
+		if err := rows.Scan(&m.ID, &m.Scope, &m.Key, &m.Value, &m.Tags,
+			&pinnedInt, &archivedInt, &m.Origin, &m.VerifiedAt,
+			&m.CreatedAt, &m.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		m.Pinned = pinnedInt != 0
+		m.Archived = archivedInt != 0
 		out = append(out, m)
 	}
 	return out, rows.Err()

@@ -158,14 +158,16 @@ func toolDefs() []map[string]any {
 	return []map[string]any{
 		{
 			"name":        "memory_save",
-			"description": "Save or update a long-term memory entry by (scope, key). Memories are partitioned by scope: \"user\" (default, cross-project) or any string like \"repo:l0-memory\".",
+			"description": "Save or update a long-term memory entry by (scope, key). Memories are partitioned by scope: \"user\" (default, cross-project) or any string like \"repo:l0-memory\". Optional origin / origin_agent record provenance for later auditability.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"scope": map[string]any{"type": "string", "description": "Namespace for this memory. Defaults to \"user\"."},
-					"key":   map[string]any{"type": "string", "description": "Identifier within the scope."},
-					"value": map[string]any{"type": "string", "description": "Memory content."},
-					"tags":  map[string]any{"type": "string", "description": "Optional comma-separated tags."},
+					"scope":        map[string]any{"type": "string", "description": "Namespace for this memory. Defaults to \"user\"."},
+					"key":          map[string]any{"type": "string", "description": "Identifier within the scope."},
+					"value":        map[string]any{"type": "string", "description": "Memory content."},
+					"tags":         map[string]any{"type": "string", "description": "Optional comma-separated tags."},
+					"origin":       map[string]any{"type": "string", "description": "Optional free-form provenance note (session id, file path, conversation hint)."},
+					"origin_agent": map[string]any{"type": "string", "description": "Optional identifier of the host that wrote the memory (e.g. \"claude-code\", \"claude-desktop\", \"cursor\")."},
 				},
 				"required": []string{"key", "value"},
 			},
@@ -244,6 +246,33 @@ func toolDefs() []map[string]any {
 					"new_key": map[string]any{"type": "string"},
 				},
 				"required": []string{"old_key", "new_key"},
+			},
+		},
+		{
+			"name":        "memory_verify",
+			"description": "Mark a memory as freshly confirmed (still current). Updates verified_at = now. Use after re-checking that a fact, preference, or decision still holds. Compact views expose `staleness_days` so the host can flag (or skip) memories that haven't been verified in a while. Pinning a memory implicitly verifies it.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"scope": map[string]any{"type": "string", "description": "Defaults to \"user\"."},
+					"key":   map[string]any{"type": "string"},
+				},
+				"required": []string{"key"},
+			},
+		},
+		{
+			"name":        "memory_supersede",
+			"description": "Replace an old memory with a new one. The old key is archived (kept but hidden from list/search by default), the new key is created with the supplied value, and a `supersedes` link is created from new → old so the graph preserves history.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"scope":   map[string]any{"type": "string", "description": "Defaults to \"user\". Both keys live in the same scope."},
+					"old_key": map[string]any{"type": "string"},
+					"new_key": map[string]any{"type": "string"},
+					"value":   map[string]any{"type": "string", "description": "Value of the new memory."},
+					"tags":    map[string]any{"type": "string", "description": "Tags for the new memory (optional)."},
+				},
+				"required": []string{"old_key", "new_key", "value"},
 			},
 		},
 		{
@@ -349,16 +378,22 @@ func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error)
 	switch name {
 	case "memory_save":
 		var a struct {
-			Scope string `json:"scope"`
-			Key   string `json:"key"`
-			Value string `json:"value"`
-			Tags  string `json:"tags"`
+			Scope       string `json:"scope"`
+			Key         string `json:"key"`
+			Value       string `json:"value"`
+			Tags        string `json:"tags"`
+			Origin      string `json:"origin"`
+			OriginAgent string `json:"origin_agent"`
 		}
 		if err := json.Unmarshal(args, &a); err != nil {
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 		if strings.TrimSpace(a.Key) == "" {
 			return nil, errors.New("'key' is required")
+		}
+		if a.Origin != "" || a.OriginAgent != "" {
+			return s.store.SaveWithOptions(ctx, a.Scope, a.Key, a.Value, a.Tags,
+				&SaveOptions{Origin: a.Origin, OriginAgent: a.OriginAgent})
 		}
 		return s.store.Save(ctx, a.Scope, a.Key, a.Value, a.Tags)
 	case "memory_get":
@@ -442,6 +477,48 @@ func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error)
 			return nil, errors.New("'old_key' and 'new_key' are required")
 		}
 		m, err := s.store.Rename(ctx, a.Scope, a.OldKey, a.NewKey)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return map[string]any{"found": false}, nil
+			}
+			return nil, err
+		}
+		s.notifyResourcesListChanged()
+		return CompactView(m), nil
+	case "memory_verify":
+		var a struct {
+			Scope string `json:"scope"`
+			Key   string `json:"key"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if strings.TrimSpace(a.Key) == "" {
+			return nil, errors.New("'key' is required")
+		}
+		m, err := s.store.Verify(ctx, a.Scope, a.Key)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return map[string]any{"found": false}, nil
+			}
+			return nil, err
+		}
+		return CompactView(m), nil
+	case "memory_supersede":
+		var a struct {
+			Scope  string `json:"scope"`
+			OldKey string `json:"old_key"`
+			NewKey string `json:"new_key"`
+			Value  string `json:"value"`
+			Tags   string `json:"tags"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if strings.TrimSpace(a.OldKey) == "" || strings.TrimSpace(a.NewKey) == "" {
+			return nil, errors.New("'old_key' and 'new_key' are required")
+		}
+		m, err := s.store.Supersede(ctx, a.Scope, a.OldKey, a.NewKey, a.Value, a.Tags)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				return map[string]any{"found": false}, nil
