@@ -441,7 +441,14 @@ func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error)
 			Scope string `json:"scope"`
 			Limit int    `json:"limit"`
 		}
-		_ = json.Unmarshal(args, &a)
+		// Tolerate an empty params (no args), but reject anything that
+		// looks like params yet fails to parse — silent zero-value defaults
+		// would mask client-side bugs (e.g. scope sent as a number).
+		if len(args) > 0 && string(args) != "null" {
+			if err := json.Unmarshal(args, &a); err != nil {
+				return nil, fmt.Errorf("invalid arguments: %w", err)
+			}
+		}
 		return s.store.List(ctx, a.Scope, a.Limit)
 	case "memory_delete":
 		var a struct {
