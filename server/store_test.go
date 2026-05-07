@@ -468,6 +468,86 @@ func TestSearchHitDoesNotCarryFullValue(t *testing.T) {
 	}
 }
 
+// --- Rename ----------------------------------------------------------------
+
+func TestRenameMovesKeyAndUpdatesLinks(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "old_key", "v", "tag")
+	_, _ = s.Save(ctx, "user", "other", "v", "")
+	_, _ = s.Link(ctx, "user", "old_key", "user", "other", "see_also")
+	_, _ = s.Link(ctx, "user", "other", "user", "old_key", "depends_on")
+
+	m, err := s.Rename(ctx, "user", "old_key", "new_key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Key != "new_key" {
+		t.Fatalf("got key %q, want new_key", m.Key)
+	}
+	// Old key gone.
+	if _, err := s.Get(ctx, "user", "old_key"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("old_key should be gone, got %v", err)
+	}
+	// Links rewritten on both sides.
+	links, _ := s.Links(ctx, "user", "new_key")
+	if len(links) != 2 {
+		t.Fatalf("expected 2 links incident to new_key, got %d", len(links))
+	}
+	keys := []string{}
+	for _, l := range links {
+		if l.FromKey == "new_key" {
+			keys = append(keys, "out:"+l.ToKey)
+		}
+		if l.ToKey == "new_key" {
+			keys = append(keys, "in:"+l.FromKey)
+		}
+	}
+	if len(keys) != 2 {
+		t.Errorf("links not pointing at new_key: %+v", links)
+	}
+}
+
+func TestRenameSameKeyIsNoOp(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "k", "v", "")
+	m, err := s.Rename(ctx, "user", "k", "k")
+	if err != nil || m.Key != "k" {
+		t.Fatalf("same-key rename should be a no-op: %+v err=%v", m, err)
+	}
+}
+
+func TestRenameNotFound(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.Rename(context.Background(), "user", "ghost", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestRenameRefusesCollision(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "a", "v", "")
+	_, _ = s.Save(ctx, "user", "b", "v", "")
+	if _, err := s.Rename(ctx, "user", "a", "b"); err == nil {
+		t.Fatal("expected collision error")
+	}
+}
+
+func TestRenameKeepsFTSConsistent(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "stable_key", "needle in the haystack", "")
+	if _, err := s.Rename(ctx, "user", "stable_key", "renamed"); err != nil {
+		t.Fatal(err)
+	}
+	hits, _ := s.Search(ctx, "", "needle", 0)
+	if len(hits) != 1 || hits[0].Key != "renamed" {
+		t.Errorf("FTS should follow rename; got %+v", keysOf(hits))
+	}
+}
+
 // --- Scope + pinning -------------------------------------------------------
 
 func TestSaveSameKeyInDifferentScopes(t *testing.T) {

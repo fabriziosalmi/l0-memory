@@ -22,7 +22,7 @@ func extractScope(args []string) (string, []string) {
 
 func runCLI(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: ltm [--scope <name>] <list|pinned|get|search|query|save|delete|pin|unpin|link|unlink|links|traverse|path|version> [args...]")
+		return fmt.Errorf("usage: ltm [--scope <name>] <list|pinned|get|search|query|save|delete|rename|pin|unpin|link|unlink|links|traverse|path|version> [args...]")
 	}
 
 	scope, args := extractScope(args)
@@ -126,6 +126,18 @@ func runCLI(args []string) error {
 			return err
 		}
 		return writeJSON(os.Stdout, map[string]any{"deleted": ok})
+	case "rename":
+		if len(rest) < 2 {
+			return fmt.Errorf("usage: ltm [--scope <name>] rename <old_key> <new_key>")
+		}
+		m, err := store.Rename(ctx, scope, rest[0], rest[1])
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return writeJSON(os.Stdout, map[string]any{"found": false})
+			}
+			return err
+		}
+		return writeJSON(os.Stdout, m)
 	case "pin", "unpin":
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: ltm [--scope <name>] %s <key>", cmd)

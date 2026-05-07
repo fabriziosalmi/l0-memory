@@ -234,6 +234,19 @@ func toolDefs() []map[string]any {
 			},
 		},
 		{
+			"name":        "memory_rename",
+			"description": "Rename a memory's key within its scope. Atomic: incident links are updated to point at the new key. Errors if old_key doesn't exist or new_key is already taken.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"scope":   map[string]any{"type": "string", "description": "Defaults to \"user\"."},
+					"old_key": map[string]any{"type": "string"},
+					"new_key": map[string]any{"type": "string"},
+				},
+				"required": []string{"old_key", "new_key"},
+			},
+		},
+		{
 			"name":        "memory_pin",
 			"description": "Toggle the pinned flag on a memory. Pinned memories are surfaced at the top of memory_list and exposed as MCP resources at memory://<scope>/<key>, so the host can attach them to context automatically. Use for stable, high-value notes you want always available.",
 			"inputSchema": map[string]any{
@@ -416,6 +429,27 @@ func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error)
 			s.notifyResourcesListChanged()
 		}
 		return map[string]any{"deleted": ok}, nil
+	case "memory_rename":
+		var a struct {
+			Scope  string `json:"scope"`
+			OldKey string `json:"old_key"`
+			NewKey string `json:"new_key"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if strings.TrimSpace(a.OldKey) == "" || strings.TrimSpace(a.NewKey) == "" {
+			return nil, errors.New("'old_key' and 'new_key' are required")
+		}
+		m, err := s.store.Rename(ctx, a.Scope, a.OldKey, a.NewKey)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return map[string]any{"found": false}, nil
+			}
+			return nil, err
+		}
+		s.notifyResourcesListChanged()
+		return CompactView(m), nil
 	case "memory_pin":
 		var a struct {
 			Scope  string `json:"scope"`

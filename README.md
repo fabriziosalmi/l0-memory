@@ -101,6 +101,7 @@ config snippet (host-agnostic):
 | `memory_unlink`   | `from_scope?`, `from_key`, `to_scope?`, `to_key`, `rel` | Remove a typed edge |
 | `memory_links`    | `scope?`, `key`                             | List every link incident to a memory |
 | `memory_traverse` | `scope?`, `key`, `depth?`, `rel?`, `direction?` | BFS subgraph view |
+| `memory_rename`   | `scope?`, `old_key`, `new_key`              | Rename a key atomically; cascades through links |
 
 Pinned memories are also exposed as **MCP resources** at
 `memory:///<scope>/<key>` so an MCP host can attach them to context with no
@@ -136,6 +137,7 @@ ltm search <query> [limit]
 ltm query <key> [path]                        # JSON Pointer + '*' wildcard slice
 ltm save <key> <value|-> [tags]               # value of "-" reads from stdin
 ltm delete <key>
+ltm rename <old_key> <new_key>                # cascades through links
 ltm pin <key>                                 # toggle pin on
 ltm unpin <key>                               # toggle pin off
 ltm link <from_key> <rel> <to_key>            # same-scope edge
@@ -263,6 +265,8 @@ D3 force-directed graph:
 | `l0-memory.binaryPath`   | `""`    | Absolute path to `ltm`. Empty = auto-discovery (bundled, dev layout, common, PATH).    |
 | `l0-memory.dbPath`       | `""`    | Override SQLite DB path (sets `LTM_DB`). Empty = `~/.long-term-memory/memories.db`.    |
 | `l0-memory.defaultScope` | `"user"`| `user` / `ask` / `repo:current`. Determines where new memories go when added from UI. |
+| `l0-memory.groupByScope` | `false` | Group memories under collapsible scope nodes in the Memories tree.                    |
+| `l0-memory.sortBy`       | `"updated"` | `updated` / `created` / `key` / `scope`. Pinned items always come first.        |
 | `l0-memory.autoStartMCP` | `false` | Spawn the MCP server in the background on activation. Usually unnecessary.            |
 
 ### Auto-discovery

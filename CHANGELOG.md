@@ -4,6 +4,46 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-05-07
+
+Tree polish + rename + power-user UX. Server adds one new operation
+(`memory_rename`); the rest is extension UX.
+
+### Added — server
+- `Store.Rename(scope, oldKey, newKey)` rewrites the key atomically and
+  cascades the change through `memory_links` (both `from_key` and
+  `to_key`). Uses `PRAGMA defer_foreign_keys = ON` inside the
+  transaction so the composite FK is checked at commit time.
+- `memory_rename` MCP tool + `ltm [--scope X] rename <old> <new>` CLI
+  subcommand. Returns `ErrNotFound` for missing source, errors on
+  destination collision; same-key call is a no-op.
+
+### Added — extension UX
+- **Rename key…** context action on every tree item (calls `ltm rename`).
+- **View title indicator**: when filter / scope / sort / group are active,
+  the Memories tree shows them in the view's description, e.g.
+  `scope:user · q:"caddy" · sort:key · grouped`.
+- **Differentiated icons**: pinned → `pinned`, JSON-valued →
+  `symbol-namespace`, plain text → `symbol-text` (was the generic
+  `symbol-key`).
+- **Group by scope** toggle (toolbar) backed by `l0-memory.groupByScope`
+  setting. When on, the tree groups memories under collapsible scope
+  nodes (`user`, `feedback`, `repo:*`). Disabled when scope filter is
+  already restricting the view.
+- **Sort options** quickPick (toolbar) backed by `l0-memory.sortBy`:
+  `updated` (default) / `created` / `key` / `scope`. Pinned memories
+  always come first within any sort.
+- **Bulk delete**: the Memories tree is now multi-selectable
+  (`canSelectMany: true`). Toolbar overflow `Delete selected memories`
+  walks the selection with a single confirmation prompt.
+
+### Tooltip
+- Now shows _scope_, _tags_, _pinned_, _size_, _updated_ on every memory.
+  Body preview truncated at 400 chars.
+
+### Bumped
+- VSCode extension `0.3.0` → `0.4.0`.
+
 ## [0.3.0] - 2026-05-07
 
 VSCode extension UX overhaul. Server is unchanged from 0.2.0; only the
