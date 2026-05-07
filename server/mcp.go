@@ -194,6 +194,19 @@ func toolDefs() []map[string]any {
 				"required": []string{"key", "path"},
 			},
 		},
+		{
+			"name":        "memory_pin",
+			"description": "Toggle the pinned flag on a memory. Pinned memories are surfaced at the top of memory_list and exposed as MCP resources at memory://<scope>/<key>, so the host can attach them to context automatically. Use for stable, high-value notes you want always available.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"scope":  map[string]any{"type": "string", "description": "Defaults to \"user\"."},
+					"key":    map[string]any{"type": "string"},
+					"pinned": map[string]any{"type": "boolean", "description": "true to pin, false to unpin."},
+				},
+				"required": []string{"key", "pinned"},
+			},
+		},
 	}
 }
 
@@ -302,6 +315,26 @@ func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error)
 			return nil, err
 		}
 		return map[string]any{"deleted": ok}, nil
+	case "memory_pin":
+		var a struct {
+			Scope  string `json:"scope"`
+			Key    string `json:"key"`
+			Pinned bool   `json:"pinned"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if strings.TrimSpace(a.Key) == "" {
+			return nil, errors.New("'key' is required")
+		}
+		m, err := s.store.Pin(ctx, a.Scope, a.Key, a.Pinned)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return map[string]any{"found": false}, nil
+			}
+			return nil, err
+		}
+		return CompactView(m), nil
 	case "memory_query":
 		var a struct {
 			Scope string `json:"scope"`

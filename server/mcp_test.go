@@ -276,6 +276,54 @@ func TestMCPMemoryGetCompactByDefault(t *testing.T) {
 	}
 }
 
+func TestMCPMemoryPinRoundTrip(t *testing.T) {
+	resps := runRequests(t, []map[string]any{
+		{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{
+			"name":      "memory_save",
+			"arguments": map[string]any{"key": "to_pin", "value": "important", "tags": ""},
+		}},
+		{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{
+			"name":      "memory_pin",
+			"arguments": map[string]any{"key": "to_pin", "pinned": true},
+		}},
+		{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": map[string]any{
+			"name":      "memory_get",
+			"arguments": map[string]any{"key": "to_pin"},
+		}},
+		{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": map[string]any{
+			"name":      "memory_pin",
+			"arguments": map[string]any{"key": "ghost", "pinned": true},
+		}},
+	})
+
+	pinText := resps[1]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var pinned map[string]any
+	if err := json.Unmarshal([]byte(pinText), &pinned); err != nil {
+		t.Fatalf("parse pin response: %v (%s)", err, pinText)
+	}
+	if pinned["pinned"] != true {
+		t.Errorf("memory_pin response should report pinned=true, got %+v", pinned)
+	}
+
+	// memory_get should reflect the pin in its compact view.
+	getText := resps[2]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(getText), &got); err != nil {
+		t.Fatalf("parse get: %v (%s)", err, getText)
+	}
+	if got["pinned"] != true {
+		t.Errorf("memory_get compact view should reflect pinned=true, got %+v", got)
+	}
+
+	// Pinning a missing key returns {found:false}, not an error.
+	missingText := resps[3]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var missing map[string]any
+	_ = json.Unmarshal([]byte(missingText), &missing)
+	if missing["found"] != false {
+		t.Errorf("pin on missing key should be {found:false}, got %+v", missing)
+	}
+}
+
 func TestMCPMemoryQueryRoundTrip(t *testing.T) {
 	graph := `{"stats":{"repos":2},"repos":[{"n":"a","s":10},{"n":"b","s":20}]}`
 	resps := runRequests(t, []map[string]any{
