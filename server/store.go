@@ -313,6 +313,83 @@ func (s *Store) Delete(ctx context.Context, scope, key string) (bool, error) {
 	return n > 0, nil
 }
 
+// Rename moves a memory from (scope, oldKey) to (scope, newKey) in a single
+// transaction. Incident links are kept (their from/to keys are updated to
+// match). Returns ErrNotFound if (scope, oldKey) doesn't exist; returns an
+// error if (scope, newKey) is already taken.
+func (s *Store) Rename(ctx context.Context, scope, oldKey, newKey string) (*Memory, error) {
+	scope = resolveScope(scope)
+	oldKey = strings.TrimSpace(oldKey)
+	newKey = strings.TrimSpace(newKey)
+	if oldKey == "" || newKey == "" {
+		return nil, fmt.Errorf("old and new keys are required")
+	}
+	if oldKey == newKey {
+		return s.Get(ctx, scope, oldKey)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// FK on (memory_links → memories) is composite, so SQLite has no
+	// ON UPDATE CASCADE for it. Defer the FK check to commit time so we
+	// can rewrite memories.key first and then memory_links.
+	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
+		return nil, err
+	}
+
+	// 1. Source must exist.
+	var srcID int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id FROM memories WHERE scope = ? AND key = ?`, scope, oldKey,
+	).Scan(&srcID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	// 2. Destination must be free.
+	var dstID int64
+	err = tx.QueryRowContext(ctx,
+		`SELECT id FROM memories WHERE scope = ? AND key = ?`, scope, newKey,
+	).Scan(&dstID)
+	if err == nil {
+		return nil, fmt.Errorf("memory %q already exists in scope %q", newKey, scope)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
+	now := time.Now().UnixMilli()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE memories SET key = ?, updated_at = ? WHERE scope = ? AND key = ?`,
+		newKey, now, scope, oldKey,
+	); err != nil {
+		return nil, err
+	}
+	// Cascade rename through incident links — composite FK isn't an
+	// ON UPDATE CASCADE, so we update both sides explicitly.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE memory_links SET from_key = ? WHERE from_scope = ? AND from_key = ?`,
+		newKey, scope, oldKey,
+	); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE memory_links SET to_key = ? WHERE to_scope = ? AND to_key = ?`,
+		newKey, scope, oldKey,
+	); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, scope, newKey)
+}
+
 // Pin sets the pinned flag on a memory. Returns the updated record.
 func (s *Store) Pin(ctx context.Context, scope, key string, pinned bool) (*Memory, error) {
 	scope = resolveScope(scope)

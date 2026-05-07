@@ -14,9 +14,22 @@ interface Memory {
   updated_at: number;
 }
 
+interface Link {
+  id: number;
+  from_scope: string;
+  from_key: string;
+  to_scope: string;
+  to_key: string;
+  rel: string;
+  created_at: number;
+}
+
+type SortMode = "updated" | "created" | "key" | "scope";
+
 let mcpProcess: ChildProcess | undefined;
 let provider: MemoryTreeProvider;
 let pinnedProvider: PinnedTreeProvider;
+let mainTreeView: vscode.TreeView<TreeNode>;
 let outputChannel: vscode.OutputChannel;
 let statusBar: vscode.StatusBarItem | undefined;
 let extensionContext: vscode.ExtensionContext;
@@ -25,6 +38,17 @@ function refreshAllViews() {
   provider?.refresh();
   pinnedProvider?.refresh();
   void updateStatusBar();
+  void updateMainTitle();
+}
+
+function updateMainTitle() {
+  if (!mainTreeView) return;
+  const parts: string[] = [];
+  if (provider.currentScopeFilter()) parts.push(`scope:${provider.currentScopeFilter()}`);
+  if (provider.currentFilter()) parts.push(`q:"${provider.currentFilter()}"`);
+  if (provider.currentSortMode() !== "updated") parts.push(`sort:${provider.currentSortMode()}`);
+  if (provider.isGroupedByScope()) parts.push("grouped");
+  mainTreeView.description = parts.length ? parts.join(" · ") : "";
 }
 
 async function updateStatusBar() {
@@ -52,7 +76,6 @@ async function updateStatusBar() {
   }
 }
 
-// Detect whether a memory value is valid JSON (object/array, not bare scalar).
 function looksLikeJSON(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
@@ -71,20 +94,22 @@ export function activate(context: vscode.ExtensionContext) {
 
   provider = new MemoryTreeProvider(context);
   pinnedProvider = new PinnedTreeProvider(context);
-  const treeView = vscode.window.createTreeView("l0-memory.list", {
+  mainTreeView = vscode.window.createTreeView<TreeNode>("l0-memory.list", {
     treeDataProvider: provider,
-    showCollapseAll: false,
+    showCollapseAll: true,
+    canSelectMany: true,
   });
-  const pinnedView = vscode.window.createTreeView("l0-memory.pinned", {
+  const pinnedView = vscode.window.createTreeView<TreeNode>("l0-memory.pinned", {
     treeDataProvider: pinnedProvider,
     showCollapseAll: false,
   });
-  context.subscriptions.push(treeView, pinnedView);
+  context.subscriptions.push(mainTreeView, pinnedView);
 
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.command = "l0-memory.focusList";
   context.subscriptions.push(statusBar);
   void updateStatusBar();
+  void updateMainTitle();
 
   context.subscriptions.push(
     vscode.commands.registerCommand("l0-memory.refresh", () => refreshAllViews()),
@@ -95,9 +120,13 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("l0-memory.search", () => searchMemory()),
     vscode.commands.registerCommand("l0-memory.clearFilter", () => provider.setFilter("")),
     vscode.commands.registerCommand("l0-memory.filterScope", () => pickScopeFilter(context)),
+    vscode.commands.registerCommand("l0-memory.toggleGroupByScope", () => provider.toggleGroupByScope()),
+    vscode.commands.registerCommand("l0-memory.sortBy", () => pickSortMode()),
     vscode.commands.registerCommand("l0-memory.edit", (item: MemoryItem) => editMemory(context, item)),
+    vscode.commands.registerCommand("l0-memory.rename", (item: MemoryItem) => renameMemory(context, item)),
     vscode.commands.registerCommand("l0-memory.openInEditor", (item: MemoryItem) => openMemoryInEditor(item)),
     vscode.commands.registerCommand("l0-memory.delete", (item: MemoryItem) => deleteMemory(context, item)),
+    vscode.commands.registerCommand("l0-memory.deleteSelection", () => deleteSelection(context)),
     vscode.commands.registerCommand("l0-memory.pin", (item: MemoryItem) => pinMemory(context, item, true)),
     vscode.commands.registerCommand("l0-memory.unpin", (item: MemoryItem) => pinMemory(context, item, false)),
     vscode.commands.registerCommand("l0-memory.linkTo", (item: MemoryItem) => linkMemory(context, item)),
@@ -143,12 +172,10 @@ function resolveBinary(context: vscode.ExtensionContext): string {
   const bundled = bundledBinaryPath(context.extensionPath);
   if (fs.existsSync(bundled)) return bundled;
 
-  // Dev layout: server folder next to extension (this repo's git layout).
   const devExe = process.platform === "win32" ? "ltm.exe" : "ltm";
   const dev = path.join(context.extensionPath, "..", "server", devExe);
   if (fs.existsSync(dev)) return dev;
 
-  // Common manual install locations.
   const home = process.env.HOME || process.env.USERPROFILE || "";
   const candidates = [
     "/usr/local/bin/ltm",
@@ -158,7 +185,6 @@ function resolveBinary(context: vscode.ExtensionContext): string {
   ];
   for (const c of candidates) if (fs.existsSync(c)) return c;
 
-  // Last resort: rely on PATH.
   return process.platform === "win32" ? "ltm.exe" : "ltm";
 }
 
@@ -211,20 +237,15 @@ function runLTM(context: vscode.ExtensionContext, args: string[], stdin?: string
   });
 }
 
-// resolveScopeForAdd returns the scope to use for a new memory, honouring the
-// `l0-memory.defaultScope` setting:
-//   "user"           → always "user"
-//   "ask"            → quickPick with history of existing scopes + "+ new…"
-//   "repo:current"   → "repo:<workspace-folder-name>" if a folder is open, else "user"
+// --- Add / edit / delete / rename ----------------------------------------
+
 async function resolveScopeForAdd(context: vscode.ExtensionContext): Promise<string | undefined> {
   const cfg = vscode.workspace.getConfiguration("l0-memory").get<string>("defaultScope") || "user";
-
   if (cfg === "user") return "user";
   if (cfg === "repo:current") {
     const folder = vscode.workspace.workspaceFolders?.[0]?.name;
     return folder ? `repo:${folder}` : "user";
   }
-  // "ask"
   const known = await listKnownScopes(context);
   const items: vscode.QuickPickItem[] = [
     ...known.map((s) => ({ label: s, description: s === "user" ? "(default)" : "" })),
@@ -294,7 +315,7 @@ async function editMemory(context: vscode.ExtensionContext, item: MemoryItem) {
   const tags = await vscode.window.showInputBox({ prompt: "Tags", value: m.tags });
   if (tags === undefined) return;
   try {
-    await runLTM(context, ["save", m.key, "-", tags], value);
+    await runLTM(context, ["--scope", m.scope, "save", m.key, "-", tags], value);
     refreshAllViews();
   } catch (e: unknown) {
     const err = e as Error;
@@ -303,13 +324,34 @@ async function editMemory(context: vscode.ExtensionContext, item: MemoryItem) {
   }
 }
 
+async function renameMemory(context: vscode.ExtensionContext, item: MemoryItem) {
+  if (!item || !item.memory) return;
+  const m = item.memory;
+  const newKey = await vscode.window.showInputBox({
+    prompt: `Rename key in scope '${m.scope}'`,
+    value: m.key,
+    validateInput: (v) => {
+      const t = v.trim();
+      if (!t) return "Required";
+      if (t === m.key) return null;
+      return null;
+    },
+  });
+  if (!newKey || newKey.trim() === m.key) return;
+  try {
+    await runLTM(context, ["--scope", m.scope, "rename", m.key, newKey.trim()]);
+    refreshAllViews();
+    vscode.window.showInformationMessage(`Renamed '${m.key}' → '${newKey.trim()}'.`);
+  } catch (e: unknown) {
+    const err = e as Error;
+    if (err instanceof BinaryNotFoundError) return notifyBinaryMissing(err.message);
+    vscode.window.showErrorMessage(`Rename failed: ${err.message}`);
+  }
+}
+
 async function openMemoryInEditor(item: MemoryItem) {
   if (!item || !item.memory) return;
   const m = item.memory;
-
-  // JSON values get a dedicated language so VSCode gives folding +
-  // syntax highlight + JSON outline for free. The metadata moves to the
-  // tab title; we don't prepend a markdown header that would break parsing.
   if (looksLikeJSON(m.value)) {
     const pretty = (() => {
       try { return JSON.stringify(JSON.parse(m.value), null, 2); }
@@ -319,7 +361,6 @@ async function openMemoryInEditor(item: MemoryItem) {
     await vscode.window.showTextDocument(doc, { preview: false });
     return;
   }
-
   const ts = formatTimestamp(m.updated_at);
   const scopeLine = m.scope && m.scope !== "user" ? `_scope:_ ${m.scope}  \n` : "";
   const body =
@@ -342,7 +383,7 @@ async function deleteMemory(context: vscode.ExtensionContext, item: MemoryItem) 
   );
   if (choice !== "Delete") return;
   try {
-    await runLTM(context, ["delete", item.memory.key]);
+    await runLTM(context, ["--scope", item.memory.scope, "delete", item.memory.key]);
     refreshAllViews();
   } catch (e: unknown) {
     const err = e as Error;
@@ -351,11 +392,55 @@ async function deleteMemory(context: vscode.ExtensionContext, item: MemoryItem) 
   }
 }
 
+async function deleteSelection(context: vscode.ExtensionContext) {
+  if (!mainTreeView) return;
+  const selection = mainTreeView.selection.filter((n): n is MemoryItem => n instanceof MemoryItem && !!n.memory);
+  if (selection.length === 0) {
+    return vscode.window.showInformationMessage("Select one or more memories first (Ctrl/Cmd+click for multi-select).");
+  }
+  if (selection.length === 1) {
+    return deleteMemory(context, selection[0]);
+  }
+  const sample = selection.slice(0, 3).map((s) => s.memory!.key).join(", ");
+  const more = selection.length > 3 ? `, +${selection.length - 3} more` : "";
+  const choice = await vscode.window.showWarningMessage(
+    `Delete ${selection.length} memories? (${sample}${more})`,
+    { modal: true },
+    "Delete all",
+  );
+  if (choice !== "Delete all") return;
+  let deleted = 0;
+  let failed = 0;
+  for (const item of selection) {
+    try {
+      await runLTM(context, ["--scope", item.memory!.scope, "delete", item.memory!.key]);
+      deleted++;
+    } catch {
+      failed++;
+    }
+  }
+  refreshAllViews();
+  vscode.window.showInformationMessage(`Deleted ${deleted}; failed ${failed}.`);
+}
+
+async function pinMemory(context: vscode.ExtensionContext, item: MemoryItem, pin: boolean) {
+  if (!item || !item.memory) return;
+  try {
+    const args = ["--scope", item.memory.scope || "user", pin ? "pin" : "unpin", item.memory.key];
+    await runLTM(context, args);
+    refreshAllViews();
+  } catch (e: unknown) {
+    const err = e as Error;
+    if (err instanceof BinaryNotFoundError) return notifyBinaryMissing(err.message);
+    vscode.window.showErrorMessage(`${pin ? "Pin" : "Unpin"} failed: ${err.message}`);
+  }
+}
+
+// --- Link / traverse -------------------------------------------------------
+
 async function linkMemory(context: vscode.ExtensionContext, item: MemoryItem) {
   if (!item || !item.memory) return;
   const from = item.memory;
-
-  // Pick the target memory from the existing set, excluding self.
   let memories: Memory[] = [];
   try {
     const out = await runLTM(context, ["list", "1000"]);
@@ -379,19 +464,12 @@ async function linkMemory(context: vscode.ExtensionContext, item: MemoryItem) {
     { placeHolder: `Link '${from.key}' to which memory?`, matchOnDetail: true },
   );
   if (!target) return;
-
   const rel = await vscode.window.showInputBox({
     prompt: "Relationship label",
     placeHolder: "e.g. depends_on, see_also, contradicts, paired_with",
     validateInput: (v) => (v.trim() ? null : "Required"),
   });
   if (!rel) return;
-
-  // Same-scope shortcut available; for cross-scope, call the MCP tool layer
-  // via the binary's CLI, which only supports same-scope today. We pass
-  // explicit --scope on each side via two ltm calls? No — the binary's CLI
-  // requires both endpoints in the same scope. Use ltm link only when scopes
-  // match, otherwise inform the user that cross-scope linking is via MCP.
   if (from.scope !== target.memory.scope) {
     vscode.window.showWarningMessage(
       "Cross-scope links are only available via MCP/tool calls. Same-scope links work from the UI.",
@@ -407,16 +485,6 @@ async function linkMemory(context: vscode.ExtensionContext, item: MemoryItem) {
     if (err instanceof BinaryNotFoundError) return notifyBinaryMissing(err.message);
     vscode.window.showErrorMessage(`Link failed: ${err.message}`);
   }
-}
-
-interface Link {
-  id: number;
-  from_scope: string;
-  from_key: string;
-  to_scope: string;
-  to_key: string;
-  rel: string;
-  created_at: number;
 }
 
 function uri(scope: string, key: string): string {
@@ -483,7 +551,6 @@ async function unlinkInteractive(context: vscode.ExtensionContext, item: MemoryI
   if (!picked) return;
   const l = picked.link;
   try {
-    // CLI ltm unlink only works same-scope; warn otherwise.
     if (l.from_scope !== l.to_scope) {
       vscode.window.showWarningMessage("Cross-scope unlink is only available via MCP/tool calls.");
       return;
@@ -496,6 +563,34 @@ async function unlinkInteractive(context: vscode.ExtensionContext, item: MemoryI
     if (err instanceof BinaryNotFoundError) return notifyBinaryMissing(err.message);
     vscode.window.showErrorMessage(`Unlink failed: ${err.message}`);
   }
+}
+
+// --- Sort / scope filter / group toggle -----------------------------------
+
+async function pickScopeFilter(context: vscode.ExtensionContext) {
+  const known = await listKnownScopes(context);
+  const items: vscode.QuickPickItem[] = [
+    { label: "$(globe) All scopes", description: "no filter" },
+    ...known.map((s) => ({ label: s, description: s === "user" ? "(default)" : "" })),
+  ];
+  const current = provider?.currentScopeFilter() || "(all)";
+  const picked = await vscode.window.showQuickPick(items, {
+    placeHolder: `Filter by scope (current: ${current})`,
+  });
+  if (!picked) return;
+  provider.setScopeFilter(picked.label.startsWith("$(globe)") ? "" : picked.label);
+}
+
+async function pickSortMode() {
+  const current = provider?.currentSortMode() || "updated";
+  const items: { label: string; sort: SortMode; description?: string }[] = [
+    { label: "Updated (newest first)", sort: "updated", description: current === "updated" ? "(current)" : "" },
+    { label: "Created (newest first)", sort: "created", description: current === "created" ? "(current)" : "" },
+    { label: "Key (A → Z)",            sort: "key",     description: current === "key"     ? "(current)" : "" },
+    { label: "Scope, then key",        sort: "scope",   description: current === "scope"   ? "(current)" : "" },
+  ];
+  const picked = await vscode.window.showQuickPick(items, { placeHolder: "Sort order" });
+  if (picked) provider.setSortMode(picked.sort);
 }
 
 // --- Graph webview ---------------------------------------------------------
@@ -653,7 +748,6 @@ class GraphPanel {
     ]);
     const view = JSON.parse(out || "null") as TraverseGraphView | null;
     if (!view) return { nodes: [], edges: [] };
-
     const nodes: GraphNode[] = view.nodes.map((n) => ({
       id: n.uri,
       scope: n.scope,
@@ -671,8 +765,6 @@ class GraphPanel {
   }
 
   private async buildGlobal(): Promise<GraphPayload> {
-    // Walk every memory and ask for its outgoing links. With small datasets
-    // this is cheap; for very large stores we'd want a `ltm export` dump.
     const listOut = await runLTM(this.context, ["list", "1000"]);
     const memories: Memory[] = JSON.parse(listOut || "[]") || [];
     const nodeMap = new Map<string, GraphNode>();
@@ -697,8 +789,6 @@ class GraphPanel {
         const sig = `${fromId}|${l.rel}|${toId}`;
         if (seenEdge.has(sig)) continue;
         seenEdge.add(sig);
-        // Only emit edges whose endpoints we actually have nodes for; the
-        // FK cascade should keep this consistent, but be defensive.
         if (nodeMap.has(fromId) && nodeMap.has(toId)) {
           edges.push({ source: fromId, target: toId, rel: l.rel });
         }
@@ -723,18 +813,7 @@ class GraphPanel {
   }
 }
 
-async function pinMemory(context: vscode.ExtensionContext, item: MemoryItem, pin: boolean) {
-  if (!item || !item.memory) return;
-  try {
-    const args = ["--scope", item.memory.scope || "user", pin ? "pin" : "unpin", item.memory.key];
-    await runLTM(context, args);
-    refreshAllViews();
-  } catch (e: unknown) {
-    const err = e as Error;
-    if (err instanceof BinaryNotFoundError) return notifyBinaryMissing(err.message);
-    vscode.window.showErrorMessage(`${pin ? "Pin" : "Unpin"} failed: ${err.message}`);
-  }
-}
+// --- MCP server lifecycle --------------------------------------------------
 
 async function startMCP(context: vscode.ExtensionContext) {
   if (mcpProcess && !mcpProcess.killed) {
@@ -759,43 +838,95 @@ function stopMCP() {
   }
 }
 
-// Server stores Unix ms; older builds emitted seconds, so values < ~Sep 2001
-// in ms are rescaled.
 function formatTimestamp(t: number): string {
   const ms = t < 1e12 ? t * 1000 : t;
   return new Date(ms).toLocaleString();
 }
 
-class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryItem> {
-  private _onDidChange = new vscode.EventEmitter<MemoryItem | undefined | void>();
+function sortMemories(items: Memory[], mode: SortMode): Memory[] {
+  // Pinned always come first within any sort mode — they are the user's
+  // explicit "important" signal and should not be drowned by sort options.
+  const cmp = (a: Memory, b: Memory): number => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    switch (mode) {
+      case "created": return b.created_at - a.created_at;
+      case "key":     return a.key.localeCompare(b.key);
+      case "scope": {
+        const s = a.scope.localeCompare(b.scope);
+        return s !== 0 ? s : a.key.localeCompare(b.key);
+      }
+      case "updated":
+      default:        return b.updated_at - a.updated_at;
+    }
+  };
+  return [...items].sort(cmp);
+}
+
+// --- Tree providers --------------------------------------------------------
+
+type TreeNode = MemoryItem | ScopeGroupItem;
+
+class MemoryTreeProvider implements vscode.TreeDataProvider<TreeNode> {
+  private _onDidChange = new vscode.EventEmitter<TreeNode | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChange.event;
   private filter = "";
-  private scopeFilter = ""; // "" means all scopes
+  private scopeFilter = "";
+  private cache: Memory[] = [];
 
   constructor(private context: vscode.ExtensionContext) {}
 
-  refresh() { this._onDidChange.fire(); }
+  refresh() { this._onDidChange.fire(); void updateMainTitle(); }
   setFilter(q: string) { this.filter = q; this.refresh(); }
   currentFilter(): string { return this.filter; }
   setScopeFilter(s: string) { this.scopeFilter = s; this.refresh(); }
   currentScopeFilter(): string { return this.scopeFilter; }
 
-  getTreeItem(el: MemoryItem) { return el; }
+  isGroupedByScope(): boolean {
+    return vscode.workspace.getConfiguration("l0-memory").get<boolean>("groupByScope") ?? false;
+  }
+  toggleGroupByScope() {
+    const cur = this.isGroupedByScope();
+    void vscode.workspace.getConfiguration("l0-memory").update("groupByScope", !cur, vscode.ConfigurationTarget.Global);
+    // The configuration listener already triggers refreshAllViews().
+  }
 
-  async getChildren(): Promise<MemoryItem[]> {
+  currentSortMode(): SortMode {
+    const v = vscode.workspace.getConfiguration("l0-memory").get<SortMode>("sortBy");
+    return (v === "created" || v === "key" || v === "scope") ? v : "updated";
+  }
+  setSortMode(s: SortMode) {
+    void vscode.workspace.getConfiguration("l0-memory").update("sortBy", s, vscode.ConfigurationTarget.Global);
+  }
+
+  getTreeItem(el: TreeNode) { return el; }
+
+  async getChildren(parent?: TreeNode): Promise<TreeNode[]> {
+    if (parent instanceof ScopeGroupItem) {
+      const inScope = this.cache.filter((m) => m.scope === parent.scope);
+      return sortMemories(inScope, this.currentSortMode()).map((m) => MemoryItem.forMemory(m));
+    }
+    // Top level.
     try {
       const baseArgs = this.scopeFilter ? ["--scope", this.scopeFilter] : [];
       const cmd = this.filter ? ["search", this.filter, "200"] : ["list", "200"];
       const out = await runLTM(this.context, [...baseArgs, ...cmd]);
-      const memories: Memory[] = JSON.parse(out || "[]") || [];
-      if (memories.length === 0) {
+      this.cache = JSON.parse(out || "[]") || [];
+      if (this.cache.length === 0) {
         const scopeNote = this.scopeFilter ? ` in scope '${this.scopeFilter}'` : "";
         const label = this.filter
           ? `No matches for "${this.filter}"${scopeNote}`
           : `No memories${scopeNote} yet — click + to add one`;
         return [MemoryItem.placeholder(label)];
       }
-      return memories.map((m) => MemoryItem.forMemory(m));
+      const sorted = sortMemories(this.cache, this.currentSortMode());
+      if (this.isGroupedByScope() && !this.scopeFilter) {
+        const scopes = Array.from(new Set(sorted.map((m) => m.scope))).sort();
+        return scopes.map((s) => {
+          const count = sorted.filter((m) => m.scope === s).length;
+          return new ScopeGroupItem(s, count);
+        });
+      }
+      return sorted.map((m) => MemoryItem.forMemory(m));
     } catch (e: unknown) {
       const err = e as Error;
       outputChannel.appendLine(`tree load failed: ${err.message}`);
@@ -808,31 +939,16 @@ class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryItem> {
   }
 }
 
-async function pickScopeFilter(context: vscode.ExtensionContext) {
-  const known = await listKnownScopes(context);
-  const items: vscode.QuickPickItem[] = [
-    { label: "$(globe) All scopes", description: "no filter" },
-    ...known.map((s) => ({ label: s, description: s === "user" ? "(default)" : "" })),
-  ];
-  const current = provider?.currentScopeFilter() || "(all)";
-  const picked = await vscode.window.showQuickPick(items, {
-    placeHolder: `Filter by scope (current: ${current})`,
-  });
-  if (!picked) return;
-  provider.setScopeFilter(picked.label.startsWith("$(globe)") ? "" : picked.label);
-}
-
-class PinnedTreeProvider implements vscode.TreeDataProvider<MemoryItem> {
-  private _onDidChange = new vscode.EventEmitter<MemoryItem | undefined | void>();
+class PinnedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
+  private _onDidChange = new vscode.EventEmitter<TreeNode | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChange.event;
 
   constructor(private context: vscode.ExtensionContext) {}
 
   refresh() { this._onDidChange.fire(); }
+  getTreeItem(el: TreeNode) { return el; }
 
-  getTreeItem(el: MemoryItem) { return el; }
-
-  async getChildren(): Promise<MemoryItem[]> {
+  async getChildren(): Promise<TreeNode[]> {
     try {
       const out = await runLTM(this.context, ["pinned", "200"]);
       const memories: Memory[] = JSON.parse(out || "[]") || [];
@@ -851,6 +967,17 @@ class PinnedTreeProvider implements vscode.TreeDataProvider<MemoryItem> {
   }
 }
 
+// --- Tree items ------------------------------------------------------------
+
+class ScopeGroupItem extends vscode.TreeItem {
+  constructor(public readonly scope: string, public readonly count: number) {
+    super(scope, vscode.TreeItemCollapsibleState.Expanded);
+    this.description = `${count}`;
+    this.contextValue = "scope";
+    this.iconPath = new vscode.ThemeIcon(scope === "user" ? "person" : scope.startsWith("repo:") ? "repo" : "folder");
+  }
+}
+
 class MemoryItem extends vscode.TreeItem {
   readonly memory?: Memory;
 
@@ -860,20 +987,34 @@ class MemoryItem extends vscode.TreeItem {
   }
 
   static forMemory(m: Memory): MemoryItem {
-    // Default scope is "user"; show non-default scopes in front of the key
-    // so the same key in different scopes is visually distinguishable.
     const label = m.scope && m.scope !== "user" ? `${m.scope}/${m.key}` : m.key;
     const item = new MemoryItem(label, m);
-    const preview = m.value.length > 80 ? m.value.slice(0, 77) + "..." : m.value;
-    item.description = preview;
+    // Description: tags first (high signal), then a small snippet of value.
+    const preview = m.value.length > 60 ? m.value.slice(0, 57) + "…" : m.value.replace(/\s+/g, " ");
+    item.description = m.tags ? `[${m.tags}] ${preview}` : preview;
+
     const ts = formatTimestamp(m.updated_at);
-    const pinTag = m.pinned ? "  📌" : "";
     item.tooltip = new vscode.MarkdownString(
-      `**${label}**${pinTag}\n\n${m.value}\n\n_scope:_ ${m.scope || "user"}  \n_tags:_ ${m.tags || "—"}  \n_pinned:_ ${m.pinned ? "yes" : "no"}  \n_updated:_ ${ts}`,
+      `**${label}**${m.pinned ? "  📌" : ""}\n\n` +
+        `${m.value.length > 400 ? m.value.slice(0, 400) + "…" : m.value}\n\n` +
+        `_scope:_ ${m.scope || "user"}  \n` +
+        `_tags:_ ${m.tags || "—"}  \n` +
+        `_pinned:_ ${m.pinned ? "yes" : "no"}  \n` +
+        `_size:_ ${m.value.length} bytes  \n` +
+        `_updated:_ ${ts}`,
     );
-    // contextValue drives the menu/visibility for pin vs unpin actions.
+
+    // Differentiated icons: pinned > json > text. JSON detected by the
+    // first non-whitespace char ('{' or '[').
+    if (m.pinned) {
+      item.iconPath = new vscode.ThemeIcon("pinned");
+    } else if (looksLikeJSON(m.value)) {
+      item.iconPath = new vscode.ThemeIcon("symbol-namespace");
+    } else {
+      item.iconPath = new vscode.ThemeIcon("symbol-text");
+    }
+
     item.contextValue = m.pinned ? "memory.pinned" : "memory.unpinned";
-    item.iconPath = new vscode.ThemeIcon(m.pinned ? "pinned" : "symbol-key");
     item.command = {
       command: "l0-memory.openInEditor",
       title: "Open memory",
