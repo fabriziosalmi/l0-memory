@@ -495,7 +495,11 @@ async function linkMemory(context: vscode.ExtensionContext, item: MemoryItem) {
     if (err instanceof BinaryNotFoundError) return notifyBinaryMissing(err.message);
     return vscode.window.showErrorMessage(`Could not list memories: ${err.message}`);
   }
-  const candidates = memories.filter((m) => !(m.scope === from.scope && m.key === from.key));
+  // Skip self and archived rows — archived memories are intentionally
+  // hidden from list/search and shouldn't appear as fresh link targets.
+  const candidates = memories.filter(
+    (m) => !m.archived && !(m.scope === from.scope && m.key === from.key),
+  );
   if (candidates.length === 0) {
     return vscode.window.showInformationMessage("No other memories to link to.");
   }
@@ -866,21 +870,39 @@ async function startMCP(context: vscode.ExtensionContext) {
     return;
   }
   const bin = resolveBinary(context);
-  mcpProcess = spawn(bin, ["mcp"], { env: envWithDB(), stdio: ["pipe", "pipe", "pipe"] });
-  mcpProcess.stdout?.on("data", (d) => outputChannel.append(`[mcp.out] ${d}`));
-  mcpProcess.stderr?.on("data", (d) => outputChannel.append(`[mcp.err] ${d}`));
-  mcpProcess.on("exit", (code) => {
+  const child = spawn(bin, ["mcp"], { env: envWithDB(), stdio: ["pipe", "pipe", "pipe"] });
+
+  // Track the listeners so stopMCP can detach them deterministically;
+  // otherwise repeated start/stop cycles accumulate event listeners on
+  // the underlying streams.
+  const onOut = (d: Buffer | string) => outputChannel.append(`[mcp.out] ${d}`);
+  const onErr = (d: Buffer | string) => outputChannel.append(`[mcp.err] ${d}`);
+  const onExit = (code: number | null) => {
     outputChannel.appendLine(`[mcp] exited with code ${code}`);
-    mcpProcess = undefined;
-  });
+    if (mcpProcess === child) mcpProcess = undefined;
+  };
+  child.stdout?.on("data", onOut);
+  child.stderr?.on("data", onErr);
+  child.on("exit", onExit);
+
+  mcpProcess = child;
+  mcpProcessCleanup = () => {
+    child.stdout?.off("data", onOut);
+    child.stderr?.off("data", onErr);
+    child.off("exit", onExit);
+    if (!child.killed) child.kill();
+  };
   outputChannel.appendLine(`[mcp] started ${bin}`);
 }
 
+let mcpProcessCleanup: (() => void) | undefined;
+
 function stopMCP() {
-  if (mcpProcess && !mcpProcess.killed) {
-    mcpProcess.kill();
-    mcpProcess = undefined;
+  if (mcpProcessCleanup) {
+    try { mcpProcessCleanup(); } catch { /* best-effort */ }
+    mcpProcessCleanup = undefined;
   }
+  mcpProcess = undefined;
 }
 
 function formatTimestamp(t: number): string {

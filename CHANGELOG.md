@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-05-07
+
+Bugfix release after a draconian audit of the v0.5.0 surface.
+
+### Fixed
+- `memory_list` MCP dispatcher: previously `_ = json.Unmarshal(args, &a)`
+  swallowed parse errors and silently returned every scope when the
+  caller sent a malformed `args` payload. Bad arguments now produce a
+  proper JSON-RPC error.
+- `backfillFTS` is robust to FTS-index drift: it inserts the missing
+  rowids from `memories` and deletes orphan rowids that no longer exist
+  in `memories`. The previous version compared `COUNT(*)` totals, which
+  could miss persistent inconsistencies in the presence of orphans.
+- `migrateSchema` 0.5 additive step now runs inside an explicit
+  transaction. A crash mid-migration can no longer leave the schema with
+  a partial set of new columns.
+- VSCode extension: `startMCP` tracks its `stdout`/`stderr`/`exit`
+  listeners and detaches them deterministically on `stopMCP`. Repeated
+  start/stop cycles no longer accumulate event listeners on the
+  underlying streams.
+- VSCode extension: the "Link to…" picker now excludes archived
+  memories, in line with `memory_list` / `memory_search` behaviour.
+
+### Documentation
+- README: rewritten for accuracy and brevity. Tool table now lists
+  required vs optional arguments separately; the `memory_save` row
+  documents `origin` and `origin_agent` (added in 0.5.0).
+- `extension/README.md`: synchronised with the main README. The settings
+  table now includes `defaultScope`, `groupByScope`, `sortBy`.
+- README status-bar text matches the actual codicon-based output.
+- CHANGELOG entry for 0.2.0: removed an unverifiable claim about the
+  previous MCP protocol version (the relevant commits were dropped during
+  the v0.1.0 history reset).
+- Added a "Diagnostics" section documenting `LTM_DEBUG` and
+  `LTM_LOG_FILE`.
+
 ## [0.5.0] - 2026-05-07
 
 Freshness signals + provenance + supersession. Targets the "AI cites
@@ -314,7 +350,9 @@ First public release. Highlights:
 - `Memory.created_at` / `updated_at` are now stored as **Unix milliseconds**
   (previously seconds) for better ordering granularity. The extension auto-detects
   legacy second-precision values and rescales.
-- MCP protocol version bumped from `2024-11-05` to `2025-06-18`.
+- MCP protocol version declared as `2025-06-18`. Clients that announce a
+  newer revision get their version echoed back in the `initialize`
+  response.
 - `Store` API now takes `context.Context` on every call.
 - The MCP server validates required tool arguments (`key`, `query`) and returns
   a structured tool error instead of relying on SQL-level failures.

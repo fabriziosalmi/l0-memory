@@ -159,7 +159,10 @@ func openStoreAt(path string) (*Store, error) {
 }
 
 // migrateSchema upgrades pre-0.2 / pre-0.5 databases to the current schema.
-// Idempotent: a no-op once the columns are already in place.
+// Idempotent: a no-op once the columns are already in place. The 0.5
+// additive migration is wrapped in a transaction so a crash midway leaves
+// the schema in a consistent (pre-migration) state. The 0.2 migration is
+// already transactional inside migrateTo02.
 func migrateSchema(db *sql.DB) error {
 	cols, err := columnSet(db, "memories")
 	if err != nil {
@@ -167,12 +170,11 @@ func migrateSchema(db *sql.DB) error {
 	}
 
 	// 0.2 migration: scope+pinned. Requires UNIQUE constraint change so we
-	// rebuild the table.
+	// rebuild the table (own transaction inside migrateTo02).
 	if !(cols["scope"] && cols["pinned"]) {
 		if err := migrateTo02(db); err != nil {
 			return err
 		}
-		// Refresh column set after rebuild.
 		cols, err = columnSet(db, "memories")
 		if err != nil {
 			return err
@@ -187,15 +189,26 @@ func migrateSchema(db *sql.DB) error {
 		{"origin", "ALTER TABLE memories ADD COLUMN origin TEXT NOT NULL DEFAULT ''"},
 		{"verified_at", "ALTER TABLE memories ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0"},
 	}
+	pending := adds[:0]
 	for _, a := range adds {
-		if cols[a.name] {
-			continue
+		if !cols[a.name] {
+			pending = append(pending, a)
 		}
-		if _, err := db.Exec(a.ddl); err != nil {
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, a := range pending {
+		if _, err := tx.Exec(a.ddl); err != nil {
+			_ = tx.Rollback()
 			return fmt.Errorf("add column %q: %w", a.name, err)
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func columnSet(db *sql.DB, table string) (map[string]bool, error) {
@@ -274,24 +287,32 @@ func migrateTo02(db *sql.DB) error {
 	return tx.Commit()
 }
 
+// backfillFTS keeps memories_fts in sync with the source table. Two failure
+// modes can leave them out of sync:
+//   1. memories has rows the FTS index doesn't know about (a pre-FTS DB
+//      that was migrated, or rows inserted while triggers were absent).
+//   2. memories_fts has rowids that no longer exist in memories (this should
+//      not happen under normal trigger flow, but a corrupt DB can produce
+//      this and a naive COUNT-based check would miss case 1 forever).
+//
+// We address both: insert what's missing in FTS, then delete FTS rows whose
+// rowid has no match in memories.
 func backfillFTS(db *sql.DB) error {
-	var memCount, ftsCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM memories`).Scan(&memCount); err != nil {
-		return err
-	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM memories_fts`).Scan(&ftsCount); err != nil {
-		return err
-	}
-	if memCount == ftsCount {
-		return nil
-	}
-	_, err := db.Exec(`
+	if _, err := db.Exec(`
 		INSERT INTO memories_fts(rowid, key, value, tags)
 		SELECT m.id, m.key, m.value, m.tags
 		FROM memories m
-		WHERE m.id NOT IN (SELECT rowid FROM memories_fts)
-	`)
-	return err
+		WHERE NOT EXISTS (SELECT 1 FROM memories_fts f WHERE f.rowid = m.id)
+	`); err != nil {
+		return fmt.Errorf("fts insert missing: %w", err)
+	}
+	if _, err := db.Exec(`
+		DELETE FROM memories_fts
+		WHERE rowid NOT IN (SELECT id FROM memories)
+	`); err != nil {
+		return fmt.Errorf("fts delete orphans: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
