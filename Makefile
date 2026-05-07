@@ -15,6 +15,7 @@ help:
 	@echo "  extension-compile — tsc compile of the extension"
 	@echo "  vsix              — package the extension (.vsix)"
 	@echo "  install-mcp       — register the local ltm with claude code"
+	@echo "  install-mcp-desktop — register the local ltm with Claude Desktop"
 	@echo "  clean             — remove server binary, extension/bin, .vsix files"
 
 build:
@@ -39,6 +40,23 @@ install-mcp: build
 	@echo "Registering ltm MCP server with Claude Code…"
 	@command -v claude >/dev/null 2>&1 || { echo "claude CLI not found in PATH" >&2; exit 1; }
 	claude mcp add l0-memory $(CURDIR)/server/ltm mcp
+
+install-mcp-desktop: build
+	@echo "Registering ltm MCP server with Claude Desktop…"
+	@command -v jq >/dev/null 2>&1 || { echo "jq not found (brew install jq)" >&2; exit 1; }
+	@case "$$(uname -s)" in \
+		Darwin) cfg="$$HOME/Library/Application Support/Claude/claude_desktop_config.json" ;; \
+		Linux)  cfg="$$HOME/.config/Claude/claude_desktop_config.json" ;; \
+		*)      echo "Unsupported OS for this target" >&2; exit 1 ;; \
+	esac; \
+	mkdir -p "$$(dirname "$$cfg")"; \
+	[ -f "$$cfg" ] || echo '{"mcpServers":{}}' > "$$cfg"; \
+	cp "$$cfg" "$$cfg.bak.$$(date +%Y%m%d-%H%M%S)"; \
+	jq --arg bin "$(CURDIR)/server/ltm" \
+	  '.mcpServers["l0-memory"] = {command: $$bin, args: ["mcp"]}' \
+	  "$$cfg" > "$$cfg.tmp" && mv "$$cfg.tmp" "$$cfg"; \
+	echo "wrote $$cfg"; \
+	echo "→ restart Claude Desktop (Cmd+Q then reopen) to pick up the change."
 
 clean:
 	rm -f server/ltm server/ltm.exe

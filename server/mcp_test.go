@@ -9,9 +9,10 @@ import (
 	"testing"
 )
 
-// runRequests pipes a sequence of JSON-RPC requests through runMCP and parses
-// the per-line responses. It uses a fresh store backed by a temp file.
-func runRequests(t *testing.T, requests []map[string]any) []map[string]any {
+// runRequestsAll pipes a sequence of JSON-RPC requests through runMCP and
+// parses every per-line message — including server-emitted notifications,
+// which look like requests (no id, method set).
+func runRequestsAll(t *testing.T, requests []map[string]any) []map[string]any {
 	t.Helper()
 	store, err := openStoreAt(filepath.Join(t.TempDir(), "mcp.db"))
 	if err != nil {
@@ -33,7 +34,7 @@ func runRequests(t *testing.T, requests []map[string]any) []map[string]any {
 		t.Fatalf("runMCP: %v", err)
 	}
 
-	var resps []map[string]any
+	var msgs []map[string]any
 	for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
 		if line == "" {
 			continue
@@ -42,9 +43,24 @@ func runRequests(t *testing.T, requests []map[string]any) []map[string]any {
 		if err := json.Unmarshal([]byte(line), &m); err != nil {
 			t.Fatalf("unmarshal response %q: %v", line, err)
 		}
-		resps = append(resps, m)
+		msgs = append(msgs, m)
 	}
-	return resps
+	return msgs
+}
+
+// runRequests is the most common helper: it returns only the request/response
+// pairs, filtering out server-emitted notifications. Tests that want to
+// observe notifications use runRequestsAll directly.
+func runRequests(t *testing.T, requests []map[string]any) []map[string]any {
+	t.Helper()
+	all := runRequestsAll(t, requests)
+	out := make([]map[string]any, 0, len(all))
+	for _, m := range all {
+		if _, hasID := m["id"]; hasID {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func TestMCPInitializeAndToolsList(t *testing.T) {
@@ -273,6 +289,54 @@ func TestMCPMemoryGetCompactByDefault(t *testing.T) {
 	}
 	if _, has := expand["compact"]; has {
 		t.Errorf("expanded get should not be marked compact")
+	}
+}
+
+func TestMCPMemoryPinRoundTrip(t *testing.T) {
+	resps := runRequests(t, []map[string]any{
+		{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{
+			"name":      "memory_save",
+			"arguments": map[string]any{"key": "to_pin", "value": "important", "tags": ""},
+		}},
+		{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{
+			"name":      "memory_pin",
+			"arguments": map[string]any{"key": "to_pin", "pinned": true},
+		}},
+		{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": map[string]any{
+			"name":      "memory_get",
+			"arguments": map[string]any{"key": "to_pin"},
+		}},
+		{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": map[string]any{
+			"name":      "memory_pin",
+			"arguments": map[string]any{"key": "ghost", "pinned": true},
+		}},
+	})
+
+	pinText := resps[1]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var pinned map[string]any
+	if err := json.Unmarshal([]byte(pinText), &pinned); err != nil {
+		t.Fatalf("parse pin response: %v (%s)", err, pinText)
+	}
+	if pinned["pinned"] != true {
+		t.Errorf("memory_pin response should report pinned=true, got %+v", pinned)
+	}
+
+	// memory_get should reflect the pin in its compact view.
+	getText := resps[2]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(getText), &got); err != nil {
+		t.Fatalf("parse get: %v (%s)", err, getText)
+	}
+	if got["pinned"] != true {
+		t.Errorf("memory_get compact view should reflect pinned=true, got %+v", got)
+	}
+
+	// Pinning a missing key returns {found:false}, not an error.
+	missingText := resps[3]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var missing map[string]any
+	_ = json.Unmarshal([]byte(missingText), &missing)
+	if missing["found"] != false {
+		t.Errorf("pin on missing key should be {found:false}, got %+v", missing)
 	}
 }
 

@@ -13,8 +13,10 @@ import (
 // expand:true) when the caller really wants the body.
 func CompactView(m *Memory) map[string]any {
 	out := map[string]any{
+		"scope":      m.Scope,
 		"key":        m.Key,
 		"tags":       m.Tags,
+		"pinned":     m.Pinned,
 		"created_at": m.CreatedAt,
 		"updated_at": m.UpdatedAt,
 		"size_bytes": len(m.Value),

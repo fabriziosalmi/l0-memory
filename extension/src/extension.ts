@@ -5,43 +5,58 @@ import * as fs from "fs";
 
 interface Memory {
   id: number;
+  scope: string;
   key: string;
   value: string;
   tags: string;
+  pinned: boolean;
   created_at: number;
   updated_at: number;
 }
 
 let mcpProcess: ChildProcess | undefined;
 let provider: MemoryTreeProvider;
+let pinnedProvider: PinnedTreeProvider;
 let outputChannel: vscode.OutputChannel;
+
+function refreshAllViews() {
+  provider?.refresh();
+  pinnedProvider?.refresh();
+}
 
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel("l0-memory");
   context.subscriptions.push(outputChannel);
 
   provider = new MemoryTreeProvider(context);
+  pinnedProvider = new PinnedTreeProvider(context);
   const treeView = vscode.window.createTreeView("l0-memory.list", {
     treeDataProvider: provider,
     showCollapseAll: false,
   });
-  context.subscriptions.push(treeView);
+  const pinnedView = vscode.window.createTreeView("l0-memory.pinned", {
+    treeDataProvider: pinnedProvider,
+    showCollapseAll: false,
+  });
+  context.subscriptions.push(treeView, pinnedView);
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("l0-memory.refresh", () => provider.refresh()),
+    vscode.commands.registerCommand("l0-memory.refresh", () => refreshAllViews()),
     vscode.commands.registerCommand("l0-memory.add", () => addMemory(context)),
     vscode.commands.registerCommand("l0-memory.search", () => searchMemory()),
     vscode.commands.registerCommand("l0-memory.clearFilter", () => provider.setFilter("")),
     vscode.commands.registerCommand("l0-memory.edit", (item: MemoryItem) => editMemory(context, item)),
     vscode.commands.registerCommand("l0-memory.openInEditor", (item: MemoryItem) => openMemoryInEditor(item)),
     vscode.commands.registerCommand("l0-memory.delete", (item: MemoryItem) => deleteMemory(context, item)),
+    vscode.commands.registerCommand("l0-memory.pin", (item: MemoryItem) => pinMemory(context, item, true)),
+    vscode.commands.registerCommand("l0-memory.unpin", (item: MemoryItem) => pinMemory(context, item, false)),
     vscode.commands.registerCommand("l0-memory.startServer", () => startMCP(context)),
     vscode.commands.registerCommand("l0-memory.stopServer", () => stopMCP()),
   );
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("l0-memory")) provider.refresh();
+      if (e.affectsConfiguration("l0-memory")) refreshAllViews();
     }),
   );
 
@@ -146,7 +161,7 @@ async function addMemory(context: vscode.ExtensionContext) {
   const tags = (await vscode.window.showInputBox({ prompt: "Tags (comma-separated, optional)" })) || "";
   try {
     await runLTM(context, ["save", key, "-", tags], value);
-    provider.refresh();
+    refreshAllViews();
     vscode.window.showInformationMessage(`Saved memory '${key}'.`);
   } catch (e: unknown) {
     const err = e as Error;
@@ -173,7 +188,7 @@ async function editMemory(context: vscode.ExtensionContext, item: MemoryItem) {
   if (tags === undefined) return;
   try {
     await runLTM(context, ["save", m.key, "-", tags], value);
-    provider.refresh();
+    refreshAllViews();
   } catch (e: unknown) {
     const err = e as Error;
     if (err instanceof BinaryNotFoundError) return notifyBinaryMissing(err.message);
@@ -205,11 +220,24 @@ async function deleteMemory(context: vscode.ExtensionContext, item: MemoryItem) 
   if (choice !== "Delete") return;
   try {
     await runLTM(context, ["delete", item.memory.key]);
-    provider.refresh();
+    refreshAllViews();
   } catch (e: unknown) {
     const err = e as Error;
     if (err instanceof BinaryNotFoundError) return notifyBinaryMissing(err.message);
     vscode.window.showErrorMessage(`Delete failed: ${err.message}`);
+  }
+}
+
+async function pinMemory(context: vscode.ExtensionContext, item: MemoryItem, pin: boolean) {
+  if (!item || !item.memory) return;
+  try {
+    const args = ["--scope", item.memory.scope || "user", pin ? "pin" : "unpin", item.memory.key];
+    await runLTM(context, args);
+    refreshAllViews();
+  } catch (e: unknown) {
+    const err = e as Error;
+    if (err instanceof BinaryNotFoundError) return notifyBinaryMissing(err.message);
+    vscode.window.showErrorMessage(`${pin ? "Pin" : "Unpin"} failed: ${err.message}`);
   }
 }
 
@@ -280,6 +308,35 @@ class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryItem> {
   }
 }
 
+class PinnedTreeProvider implements vscode.TreeDataProvider<MemoryItem> {
+  private _onDidChange = new vscode.EventEmitter<MemoryItem | undefined | void>();
+  readonly onDidChangeTreeData = this._onDidChange.event;
+
+  constructor(private context: vscode.ExtensionContext) {}
+
+  refresh() { this._onDidChange.fire(); }
+
+  getTreeItem(el: MemoryItem) { return el; }
+
+  async getChildren(): Promise<MemoryItem[]> {
+    try {
+      const out = await runLTM(this.context, ["pinned", "200"]);
+      const memories: Memory[] = JSON.parse(out || "[]") || [];
+      if (memories.length === 0) {
+        return [MemoryItem.placeholder("No pinned memories — right-click an entry to pin it")];
+      }
+      return memories.map((m) => MemoryItem.forMemory(m));
+    } catch (e: unknown) {
+      const err = e as Error;
+      outputChannel.appendLine(`pinned tree load failed: ${err.message}`);
+      if (err instanceof BinaryNotFoundError) {
+        return [MemoryItem.placeholder("ltm binary not found")];
+      }
+      return [MemoryItem.placeholder(`Error: ${err.message}`)];
+    }
+  }
+}
+
 class MemoryItem extends vscode.TreeItem {
   readonly memory?: Memory;
 
@@ -289,15 +346,20 @@ class MemoryItem extends vscode.TreeItem {
   }
 
   static forMemory(m: Memory): MemoryItem {
-    const item = new MemoryItem(m.key, m);
+    // Default scope is "user"; show non-default scopes in front of the key
+    // so the same key in different scopes is visually distinguishable.
+    const label = m.scope && m.scope !== "user" ? `${m.scope}/${m.key}` : m.key;
+    const item = new MemoryItem(label, m);
     const preview = m.value.length > 80 ? m.value.slice(0, 77) + "..." : m.value;
     item.description = preview;
     const ts = formatTimestamp(m.updated_at);
+    const pinTag = m.pinned ? "  📌" : "";
     item.tooltip = new vscode.MarkdownString(
-      `**${m.key}**\n\n${m.value}\n\n_tags:_ ${m.tags || "—"}  \n_updated:_ ${ts}`,
+      `**${label}**${pinTag}\n\n${m.value}\n\n_scope:_ ${m.scope || "user"}  \n_tags:_ ${m.tags || "—"}  \n_pinned:_ ${m.pinned ? "yes" : "no"}  \n_updated:_ ${ts}`,
     );
-    item.contextValue = "memory";
-    item.iconPath = new vscode.ThemeIcon("symbol-key");
+    // contextValue drives the menu/visibility for pin vs unpin actions.
+    item.contextValue = m.pinned ? "memory.pinned" : "memory.unpinned";
+    item.iconPath = new vscode.ThemeIcon(m.pinned ? "pinned" : "symbol-key");
     item.command = {
       command: "l0-memory.openInEditor",
       title: "Open memory",

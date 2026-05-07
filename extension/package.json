@@ -2,7 +2,7 @@
   "name": "l0-memory",
   "displayName": "l0-memory",
   "description": "Long-term memory for AI assistants. SQLite-backed memory store with MCP server and a VSCode UI to view/edit entries.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "fabriziosalmi",
   "license": "MIT",
   "repository": {
@@ -32,6 +32,10 @@
     },
     "views": {
       "l0-memory": [
+        {
+          "id": "l0-memory.pinned",
+          "name": "Pinned"
+        },
         {
           "id": "l0-memory.list",
           "name": "Memories"
@@ -74,6 +78,16 @@
         "icon": "$(trash)"
       },
       {
+        "command": "l0-memory.pin",
+        "title": "l0-memory: Pin",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "l0-memory.unpin",
+        "title": "l0-memory: Unpin",
+        "icon": "$(pin)"
+      },
+      {
         "command": "l0-memory.startServer",
         "title": "l0-memory: Start MCP server (manual)"
       },
@@ -87,12 +101,25 @@
         { "command": "l0-memory.add", "when": "view == l0-memory.list", "group": "navigation@1" },
         { "command": "l0-memory.search", "when": "view == l0-memory.list", "group": "navigation@2" },
         { "command": "l0-memory.clearFilter", "when": "view == l0-memory.list", "group": "navigation@3" },
-        { "command": "l0-memory.refresh", "when": "view == l0-memory.list", "group": "navigation@4" }
+        { "command": "l0-memory.refresh", "when": "view == l0-memory.list", "group": "navigation@4" },
+        { "command": "l0-memory.refresh", "when": "view == l0-memory.pinned", "group": "navigation@1" }
       ],
       "view/item/context": [
-        { "command": "l0-memory.openInEditor", "when": "view == l0-memory.list && viewItem == memory", "group": "inline@1" },
-        { "command": "l0-memory.edit", "when": "view == l0-memory.list && viewItem == memory", "group": "inline@2" },
-        { "command": "l0-memory.delete", "when": "view == l0-memory.list && viewItem == memory", "group": "inline@3" }
+        { "command": "l0-memory.openInEditor",
+          "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
+          "group": "inline@1" },
+        { "command": "l0-memory.pin",
+          "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem == memory.unpinned",
+          "group": "inline@2" },
+        { "command": "l0-memory.unpin",
+          "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem == memory.pinned",
+          "group": "inline@2" },
+        { "command": "l0-memory.edit",
+          "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
+          "group": "inline@3" },
+        { "command": "l0-memory.delete",
+          "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
+          "group": "inline@4" }
       ]
     },
     "configuration": {

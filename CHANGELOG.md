@@ -4,6 +4,63 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-05-07
+
+The "knowledge graph" release. Adds three orthogonal capabilities that
+turn l0-memory from a flat KV+search store into a curated, navigable
+context surface for any MCP host (Claude Code, Claude Desktop, Cursor,
+Cline, …).
+
+### Added — scope as first-class column
+- `memories` now has a `scope` text column (default `"user"`) with
+  `UNIQUE(scope, key)` replacing the old key-only uniqueness, so the
+  same raw key can coexist in `user`, `repo:l0-memory`, etc.
+- All MCP tools take an optional `scope`. Save/get/delete default to
+  `"user"`; list/search treat empty scope as "all scopes".
+- CLI: `ltm [--scope <name>] …` (and `LTM_SCOPE` env). Default behaviour
+  unchanged for existing scripts.
+- Automatic, idempotent migration from v0.1.x DBs (rebuild table inside
+  a transaction, FTS index preserved).
+
+### Added — pin + MCP resources
+- `pinned` integer column on memories. `memory_list` sorts pinned first.
+- `memory_pin {scope?, key, pinned}` MCP tool + `ltm pin` / `ltm unpin`
+  CLI commands + `ltm pinned` listing alias.
+- Pinned memories are exposed as MCP **resources** at
+  `memory:///<scope>/<key>` so MCP hosts attach them to context with
+  zero round-trips. `notifications/resources/list_changed` is emitted
+  on every pin/unpin/delete that may change the set.
+- VSCode extension grew a "Pinned" TreeView above "Memories" with Pin /
+  Unpin context actions. Non-default scopes are shown as `scope/key` to
+  disambiguate. extension bumped to **0.2.0**.
+
+### Added — knowledge-graph layer (memory_link)
+- New `memory_links` table with composite FKs to `memories(scope, key)`
+  and `ON DELETE CASCADE`. The `(from, to, rel)` triple is unique;
+  re-linking is a no-op.
+- Store API: `Link`, `Unlink`, `Links`, `Neighbors(rel, direction)`,
+  `Traverse(depth, rel, direction)` returning `{root, depth, nodes,
+  edges}` with cycle detection.
+- MCP tools `memory_link`, `memory_unlink`, `memory_links`,
+  `memory_traverse`. Cross-scope edges work — `repo:waf/main`
+  `--uses→` `user/tech:caddy`.
+- CLI: `ltm link`, `ltm unlink`, `ltm links`, `ltm traverse [depth]`.
+
+### Tests
+- 80/80 green under `-race`. New coverage: scope migration,
+  same-key-different-scope coexistence, pin toggle + ListPinned,
+  memory_pin round-trip, resources/list (only pinned + scope display),
+  resources/read content + 404, list_changed notification, link CRUD,
+  cascade on memory delete, traverse depth + cycle + cross-scope.
+
+### Migration notes
+- Existing v0.1.x databases are upgraded transparently on first open of
+  the new binary. The first start may take a fraction of a second on
+  large stores while the table is rebuilt.
+- MCP clients that previously assumed `memory_get` always returned a
+  `value` field still need `expand:true` (introduced in v0.1.0). No new
+  breaking changes in this release.
+
 ## [0.1.0] - 2026-05-07
 
 First public release. Highlights:

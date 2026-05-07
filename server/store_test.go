@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -24,7 +25,7 @@ func TestSaveAndGet(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	m, err := s.Save(ctx, "alpha", "first value", "tag1,tag2")
+	m, err := s.Save(ctx, "user", "alpha", "first value", "tag1,tag2")
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -35,7 +36,7 @@ func TestSaveAndGet(t *testing.T) {
 		t.Fatalf("timestamps must be set: %+v", m)
 	}
 
-	got, err := s.Get(ctx, "alpha")
+	got, err := s.Get(ctx, "user", "alpha")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -48,11 +49,11 @@ func TestSaveUpsertsByKey(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	first, err := s.Save(ctx, "k", "v1", "")
+	first, err := s.Save(ctx, "user", "k", "v1", "")
 	if err != nil {
 		t.Fatalf("save 1: %v", err)
 	}
-	second, err := s.Save(ctx, "k", "v2", "tagged")
+	second, err := s.Save(ctx, "user", "k", "v2", "tagged")
 	if err != nil {
 		t.Fatalf("save 2: %v", err)
 	}
@@ -70,14 +71,14 @@ func TestSaveUpsertsByKey(t *testing.T) {
 
 func TestSaveRequiresKey(t *testing.T) {
 	s := newStore(t)
-	if _, err := s.Save(context.Background(), "  ", "v", ""); err == nil {
+	if _, err := s.Save(context.Background(), "user", "  ", "v", ""); err == nil {
 		t.Fatal("expected error for empty key")
 	}
 }
 
 func TestGetNotFound(t *testing.T) {
 	s := newStore(t)
-	_, err := s.Get(context.Background(), "missing")
+	_, err := s.Get(context.Background(), "user", "missing")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -86,14 +87,14 @@ func TestGetNotFound(t *testing.T) {
 func TestDelete(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	if _, err := s.Save(ctx, "del", "v", ""); err != nil {
+	if _, err := s.Save(ctx, "user", "del", "v", ""); err != nil {
 		t.Fatal(err)
 	}
-	ok, err := s.Delete(ctx, "del")
+	ok, err := s.Delete(ctx, "user", "del")
 	if err != nil || !ok {
 		t.Fatalf("delete: ok=%v err=%v", ok, err)
 	}
-	ok, err = s.Delete(ctx, "del")
+	ok, err = s.Delete(ctx, "user", "del")
 	if err != nil || ok {
 		t.Fatalf("second delete should report not deleted: ok=%v err=%v", ok, err)
 	}
@@ -103,7 +104,7 @@ func TestListOrdersByUpdatedDesc(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	for _, k := range []string{"a", "b", "c"} {
-		if _, err := s.Save(ctx, k, "v", ""); err != nil {
+		if _, err := s.Save(ctx, "user", k, "v", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -118,7 +119,7 @@ func TestListOrdersByUpdatedDesc(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := s.List(ctx, 0)
+	out, err := s.List(ctx, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +133,7 @@ func TestListOrdersByUpdatedDesc(t *testing.T) {
 
 func TestListEmptyReturnsEmptySlice(t *testing.T) {
 	s := newStore(t)
-	out, err := s.List(context.Background(), 0)
+	out, err := s.List(context.Background(), "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,9 +148,9 @@ func TestListEmptyReturnsEmptySlice(t *testing.T) {
 func TestSearchMatchesKeyValueAndTags(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	_, _ = s.Save(ctx, "fruit_apple", "red and crunchy", "snack")
-	_, _ = s.Save(ctx, "fruit_banana", "yellow tropical", "snack,potassium")
-	_, _ = s.Save(ctx, "veg_carrot", "orange root", "")
+	_, _ = s.Save(ctx, "user", "fruit_apple", "red and crunchy", "snack")
+	_, _ = s.Save(ctx, "user", "fruit_banana", "yellow tropical", "snack,potassium")
+	_, _ = s.Save(ctx, "user", "veg_carrot", "orange root", "")
 
 	tests := []struct {
 		query string
@@ -161,7 +162,7 @@ func TestSearchMatchesKeyValueAndTags(t *testing.T) {
 		{"missing", 0},
 	}
 	for _, tc := range tests {
-		got, err := s.Search(ctx, tc.query, 0)
+		got, err := s.Search(ctx, "", tc.query, 0)
 		if err != nil {
 			t.Fatalf("search %q: %v", tc.query, err)
 		}
@@ -174,12 +175,12 @@ func TestSearchMatchesKeyValueAndTags(t *testing.T) {
 func TestSearchEscapesLikeWildcards(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	_, _ = s.Save(ctx, "k1", "100% percent", "")
-	_, _ = s.Save(ctx, "k2", "underscore_test", "")
-	_, _ = s.Save(ctx, "k3", "nothing relevant", "")
+	_, _ = s.Save(ctx, "user", "k1", "100% percent", "")
+	_, _ = s.Save(ctx, "user", "k2", "underscore_test", "")
+	_, _ = s.Save(ctx, "user", "k3", "nothing relevant", "")
 
 	// "%" must NOT act as a LIKE wildcard — only the literal "100% percent" should match.
-	got, err := s.Search(ctx, "100%", 0)
+	got, err := s.Search(ctx, "", "100%", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +189,7 @@ func TestSearchEscapesLikeWildcards(t *testing.T) {
 	}
 
 	// "_" must be literal.
-	got, err = s.Search(ctx, "underscore_", 0)
+	got, err = s.Search(ctx, "", "underscore_", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,11 +201,11 @@ func TestSearchEscapesLikeWildcards(t *testing.T) {
 func TestSearchIsCaseInsensitive(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	if _, err := s.Save(ctx, "KEY", "MixedCase Value", "TagOne"); err != nil {
+	if _, err := s.Save(ctx, "user", "KEY", "MixedCase Value", "TagOne"); err != nil {
 		t.Fatal(err)
 	}
 	for _, q := range []string{"key", "mixedcase", "tagone"} {
-		got, err := s.Search(ctx, q, 0)
+		got, err := s.Search(ctx, "", q, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -219,11 +220,11 @@ func TestSearchIsCaseInsensitive(t *testing.T) {
 func TestSearchPrefixMatch(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	_, _ = s.Save(ctx, "k1", "kubernetes operator", "")
-	_, _ = s.Save(ctx, "k2", "kubelet daemon", "")
-	_, _ = s.Save(ctx, "k3", "completely unrelated", "")
+	_, _ = s.Save(ctx, "user", "k1", "kubernetes operator", "")
+	_, _ = s.Save(ctx, "user", "k2", "kubelet daemon", "")
+	_, _ = s.Save(ctx, "user", "k3", "completely unrelated", "")
 
-	got, err := s.Search(ctx, "kube", 0)
+	got, err := s.Search(ctx, "", "kube", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,11 +236,11 @@ func TestSearchPrefixMatch(t *testing.T) {
 func TestSearchImplicitAnd(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	_, _ = s.Save(ctx, "rss_llm", "Aggregate RSS feeds with LLM rewriting", "rss,llm")
-	_, _ = s.Save(ctx, "rss_only", "Aggregate RSS feeds, plain", "rss")
-	_, _ = s.Save(ctx, "llm_only", "LLM-powered code generation", "llm")
+	_, _ = s.Save(ctx, "user", "rss_llm", "Aggregate RSS feeds with LLM rewriting", "rss,llm")
+	_, _ = s.Save(ctx, "user", "rss_only", "Aggregate RSS feeds, plain", "rss")
+	_, _ = s.Save(ctx, "user", "llm_only", "LLM-powered code generation", "llm")
 
-	got, err := s.Search(ctx, "rss llm", 0)
+	got, err := s.Search(ctx, "", "rss llm", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,9 +254,9 @@ func TestSearchTokenSplitsOnPunctuation(t *testing.T) {
 	ctx := context.Background()
 	// unicode61 tokenizer treats '_' '-' '.' as separators, so each piece is
 	// independently searchable.
-	_, _ = s.Save(ctx, "repo:caddy-waf", "Caddy plugin", "caddy,waf")
+	_, _ = s.Save(ctx, "user", "repo:caddy-waf", "Caddy plugin", "caddy,waf")
 
-	got, err := s.Search(ctx, "caddy", 0)
+	got, err := s.Search(ctx, "", "caddy", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,11 +268,11 @@ func TestSearchTokenSplitsOnPunctuation(t *testing.T) {
 func TestSearchEmptyQueryReturnsEmpty(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	if _, err := s.Save(ctx, "k", "v", ""); err != nil {
+	if _, err := s.Save(ctx, "user", "k", "v", ""); err != nil {
 		t.Fatal(err)
 	}
 	for _, q := range []string{"", "   ", "\t\n"} {
-		got, err := s.Search(ctx, q, 0)
+		got, err := s.Search(ctx, "", q, 0)
 		if err != nil {
 			t.Fatalf("query %q: %v", q, err)
 		}
@@ -284,13 +285,13 @@ func TestSearchEmptyQueryReturnsEmpty(t *testing.T) {
 func TestSearchSpecialCharactersDoNotError(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	_, _ = s.Save(ctx, "k", "100% reliable", "")
+	_, _ = s.Save(ctx, "user", "k", "100% reliable", "")
 
 	// Plain special-char queries that would break a naive FTS5 expression
 	// should either match via FTS phrase quoting or fall back to LIKE without
 	// blowing up.
 	for _, q := range []string{`100%`, `"hello`, `()`, `AND OR NOT`, `*`} {
-		if _, err := s.Search(ctx, q, 0); err != nil {
+		if _, err := s.Search(ctx, "", q, 0); err != nil {
 			t.Errorf("query %q errored: %v", q, err)
 		}
 	}
@@ -301,10 +302,10 @@ func TestSearchRanksMostRelevantFirst(t *testing.T) {
 	ctx := context.Background()
 	// Both contain "caddy" but the second has it many times -> bm25 should
 	// rank it higher.
-	_, _ = s.Save(ctx, "passing_mention", "Some other tool. Caddy is mentioned once.", "")
-	_, _ = s.Save(ctx, "caddy_focused", "caddy caddy caddy plugin caddy server caddy waf", "caddy")
+	_, _ = s.Save(ctx, "user", "passing_mention", "Some other tool. Caddy is mentioned once.", "")
+	_, _ = s.Save(ctx, "user", "caddy_focused", "caddy caddy caddy plugin caddy server caddy waf", "caddy")
 
-	got, err := s.Search(ctx, "caddy", 0)
+	got, err := s.Search(ctx, "", "caddy", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +323,7 @@ func TestFTSBackfillsRowsMissingFromIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if _, err := s.Save(ctx, "before_index", "needle in the haystack", "demo"); err != nil {
+	if _, err := s.Save(ctx, "user", "before_index", "needle in the haystack", "demo"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -330,7 +331,7 @@ func TestFTSBackfillsRowsMissingFromIndex(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM memories_fts`); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.Search(ctx, "needle", 0)
+	got, _ := s.Search(ctx, "", "needle", 0)
 	if len(got) != 0 {
 		t.Fatalf("precondition: search should miss after wiping fts, got %d", len(got))
 	}
@@ -342,7 +343,7 @@ func TestFTSBackfillsRowsMissingFromIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s2.Close()
-	got, err = s2.Search(ctx, "needle", 0)
+	got, err = s2.Search(ctx, "", "needle", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,26 +356,26 @@ func TestFTSStaysInSyncOnUpdateAndDelete(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	if _, err := s.Save(ctx, "drift", "alpha bravo", ""); err != nil {
+	if _, err := s.Save(ctx, "user", "drift", "alpha bravo", ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// After update, only the new content should be searchable.
-	if _, err := s.Save(ctx, "drift", "charlie delta", ""); err != nil {
+	if _, err := s.Save(ctx, "user", "drift", "charlie delta", ""); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _ := s.Search(ctx, "alpha", 0); len(hits) != 0 {
+	if hits, _ := s.Search(ctx, "", "alpha", 0); len(hits) != 0 {
 		t.Errorf("post-update: 'alpha' should not match; got %+v", keysOf(hits))
 	}
-	if hits, _ := s.Search(ctx, "charlie", 0); len(hits) != 1 {
+	if hits, _ := s.Search(ctx, "", "charlie", 0); len(hits) != 1 {
 		t.Errorf("post-update: 'charlie' should match exactly once; got %+v", keysOf(hits))
 	}
 
 	// After delete, nothing should match.
-	if _, err := s.Delete(ctx, "drift"); err != nil {
+	if _, err := s.Delete(ctx, "user", "drift"); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _ := s.Search(ctx, "charlie", 0); len(hits) != 0 {
+	if hits, _ := s.Search(ctx, "", "charlie", 0); len(hits) != 0 {
 		t.Errorf("post-delete: 'charlie' should not match; got %+v", keysOf(hits))
 	}
 }
@@ -382,10 +383,10 @@ func TestFTSStaysInSyncOnUpdateAndDelete(t *testing.T) {
 func TestSearchReturnsSnippetWithHighlight(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	if _, err := s.Save(ctx, "doc", "the quick brown fox jumps over the lazy dog and continues running across the field", ""); err != nil {
+	if _, err := s.Save(ctx, "user", "doc", "the quick brown fox jumps over the lazy dog and continues running across the field", ""); err != nil {
 		t.Fatal(err)
 	}
-	hits, err := s.Search(ctx, "fox", 0)
+	hits, err := s.Search(ctx, "", "fox", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,10 +408,10 @@ func TestSearchReturnsSnippetWithHighlight(t *testing.T) {
 func TestSearchHitsAreOrderedByScoreDesc(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	_, _ = s.Save(ctx, "low", "caddy mentioned once.", "")
-	_, _ = s.Save(ctx, "high", "caddy caddy caddy caddy caddy in many places caddy caddy", "")
+	_, _ = s.Save(ctx, "user", "low", "caddy mentioned once.", "")
+	_, _ = s.Save(ctx, "user", "high", "caddy caddy caddy caddy caddy in many places caddy caddy", "")
 
-	hits, err := s.Search(ctx, "caddy", 0)
+	hits, err := s.Search(ctx, "", "caddy", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,10 +429,10 @@ func TestSearchHitsAreOrderedByScoreDesc(t *testing.T) {
 func TestSearchExpandedReturnsFullRecords(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	if _, err := s.Save(ctx, "k", "the value content", "tag"); err != nil {
+	if _, err := s.Save(ctx, "user", "k", "the value content", "tag"); err != nil {
 		t.Fatal(err)
 	}
-	hits, err := s.SearchExpanded(ctx, "value", 0)
+	hits, err := s.SearchExpanded(ctx, "", "value", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,10 +447,10 @@ func TestSearchHitDoesNotCarryFullValue(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	body := strings.Repeat("kubernetes ", 100)
-	if _, err := s.Save(ctx, "big", body, ""); err != nil {
+	if _, err := s.Save(ctx, "user", "big", body, ""); err != nil {
 		t.Fatal(err)
 	}
-	hits, err := s.Search(ctx, "kubernetes", 0)
+	hits, err := s.Search(ctx, "", "kubernetes", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,6 +465,211 @@ func TestSearchHitDoesNotCarryFullValue(t *testing.T) {
 	}
 	if hits[0].SizeBytes != len(body) {
 		t.Errorf("size_bytes should match body length")
+	}
+}
+
+// --- Scope + pinning -------------------------------------------------------
+
+func TestSaveSameKeyInDifferentScopes(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	a, err := s.Save(ctx, "user", "focus", "user-level note", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.Save(ctx, "repo:l0-memory", "focus", "repo-level note", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ID == b.ID {
+		t.Fatalf("two different rows expected, got duplicate id=%d", a.ID)
+	}
+
+	got, err := s.Get(ctx, "user", "focus")
+	if err != nil || got.Value != "user-level note" {
+		t.Fatalf("user/focus mismatch: %+v err=%v", got, err)
+	}
+	got, err = s.Get(ctx, "repo:l0-memory", "focus")
+	if err != nil || got.Value != "repo-level note" {
+		t.Fatalf("repo/focus mismatch: %+v err=%v", got, err)
+	}
+}
+
+func TestEmptyScopeDefaultsToUserOnSaveGetDelete(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if _, err := s.Save(ctx, "", "implicit", "v", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, "", "implicit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Scope != "user" {
+		t.Errorf("expected scope=user, got %q", got.Scope)
+	}
+	ok, err := s.Delete(ctx, "", "implicit")
+	if err != nil || !ok {
+		t.Fatalf("delete: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestListAllScopesByDefault(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "a", "v", "")
+	_, _ = s.Save(ctx, "repo:x", "b", "v", "")
+	_, _ = s.Save(ctx, "repo:y", "c", "v", "")
+
+	all, err := s.List(ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 rows across all scopes, got %d", len(all))
+	}
+
+	repoX, err := s.List(ctx, "repo:x", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repoX) != 1 || repoX[0].Key != "b" {
+		t.Fatalf("scope filter failed: %+v", repoX)
+	}
+}
+
+func TestSearchScopeFilter(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "k1", "kubernetes operator", "")
+	_, _ = s.Save(ctx, "repo:cluster", "k2", "kubernetes scheduler", "")
+
+	all, _ := s.Search(ctx, "", "kubernetes", 0)
+	if len(all) != 2 {
+		t.Errorf("all-scopes should match both, got %d", len(all))
+	}
+	repo, _ := s.Search(ctx, "repo:cluster", "kubernetes", 0)
+	if len(repo) != 1 || repo[0].Key != "k2" {
+		t.Errorf("scope filter on search failed: %+v", repo)
+	}
+}
+
+func TestPinSetsAndUnsetsTheFlag(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if _, err := s.Save(ctx, "user", "important", "fact", ""); err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.Pin(ctx, "user", "important", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Pinned {
+		t.Error("Pinned should be true after pin")
+	}
+	m, err = s.Pin(ctx, "user", "important", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Pinned {
+		t.Error("Pinned should be false after unpin")
+	}
+}
+
+func TestPinNotFound(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.Pin(context.Background(), "user", "ghost", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestListSortsPinnedFirst(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "old_pinned", "old", "")
+	_, _ = s.Save(ctx, "user", "fresh_unpinned", "fresh", "")
+	if _, err := s.Pin(ctx, "user", "old_pinned", true); err != nil {
+		t.Fatal(err)
+	}
+	// Bump the unpinned one's updated_at to be the freshest.
+	_, _ = s.db.ExecContext(ctx, `UPDATE memories SET updated_at=999999999999 WHERE key='fresh_unpinned'`)
+
+	out, err := s.List(ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Key != "old_pinned" {
+		t.Errorf("pinned should come first even when unpinned is fresher; got %v", keysOfMemories(out))
+	}
+}
+
+func TestListPinnedReturnsOnlyPinned(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "a", "v", "")
+	_, _ = s.Save(ctx, "user", "b", "v", "")
+	_, _ = s.Save(ctx, "repo:x", "c", "v", "")
+	_, _ = s.Pin(ctx, "user", "a", true)
+	_, _ = s.Pin(ctx, "repo:x", "c", true)
+
+	all, _ := s.ListPinned(ctx, "", 0)
+	if len(all) != 2 {
+		t.Errorf("expected 2 pinned across scopes, got %d", len(all))
+	}
+	user, _ := s.ListPinned(ctx, "user", 0)
+	if len(user) != 1 || user[0].Key != "a" {
+		t.Errorf("user-scoped pinned wrong: %+v", user)
+	}
+}
+
+func TestMigrationFromV0_1Schema(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "old.db")
+
+	// Hand-build a v0.1.x DB: memories without scope/pinned, key UNIQUE.
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`
+		CREATE TABLE memories (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			key TEXT UNIQUE NOT NULL,
+			value TEXT NOT NULL,
+			tags TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+		INSERT INTO memories (key, value, tags, created_at, updated_at)
+		VALUES ('legacy', 'pre-0.2 entry', 'legacy', 1, 1);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	_ = old.Close()
+
+	// Open via openStoreAt — migration should run transparently.
+	s, err := openStoreAt(path)
+	if err != nil {
+		t.Fatalf("open after migration: %v", err)
+	}
+	defer s.Close()
+
+	got, err := s.Get(context.Background(), "user", "legacy")
+	if err != nil {
+		t.Fatalf("legacy entry missing after migration: %v", err)
+	}
+	if got.Scope != "user" || got.Value != "pre-0.2 entry" || got.Pinned {
+		t.Errorf("migrated row has unexpected fields: %+v", got)
+	}
+
+	// FTS should be working too: search across all scopes finds the legacy row.
+	hits, err := s.Search(context.Background(), "", "pre-0.2", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Key != "legacy" {
+		t.Errorf("FTS over migrated row failed: %+v", hits)
 	}
 }
 
