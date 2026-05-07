@@ -1,0 +1,129 @@
+{
+  "name": "l0-memory",
+  "displayName": "l0-memory",
+  "description": "Long-term memory for AI assistants. SQLite-backed memory store with MCP server and a VSCode UI to view/edit entries.",
+  "version": "0.1.0",
+  "publisher": "fabriziosalmi",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fabriziosalmi/l0-memory.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fabriziosalmi/l0-memory/issues"
+  },
+  "homepage": "https://github.com/fabriziosalmi/l0-memory#readme",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=18"
+  },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "l0-memory",
+          "title": "l0-memory",
+          "icon": "$(database)"
+        }
+      ]
+    },
+    "views": {
+      "l0-memory": [
+        {
+          "id": "l0-memory.list",
+          "name": "Memories"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "l0-memory.refresh",
+        "title": "l0-memory: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "l0-memory.add",
+        "title": "l0-memory: Add memory",
+        "icon": "$(add)"
+      },
+      {
+        "command": "l0-memory.search",
+        "title": "l0-memory: Search",
+        "icon": "$(search)"
+      },
+      {
+        "command": "l0-memory.clearFilter",
+        "title": "l0-memory: Clear search filter",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "l0-memory.edit",
+        "title": "l0-memory: Edit"
+      },
+      {
+        "command": "l0-memory.openInEditor",
+        "title": "l0-memory: Open in editor",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "l0-memory.delete",
+        "title": "l0-memory: Delete",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "l0-memory.startServer",
+        "title": "l0-memory: Start MCP server (manual)"
+      },
+      {
+        "command": "l0-memory.stopServer",
+        "title": "l0-memory: Stop MCP server"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "l0-memory.add", "when": "view == l0-memory.list", "group": "navigation@1" },
+        { "command": "l0-memory.search", "when": "view == l0-memory.list", "group": "navigation@2" },
+        { "command": "l0-memory.clearFilter", "when": "view == l0-memory.list", "group": "navigation@3" },
+        { "command": "l0-memory.refresh", "when": "view == l0-memory.list", "group": "navigation@4" }
+      ],
+      "view/item/context": [
+        { "command": "l0-memory.openInEditor", "when": "view == l0-memory.list && viewItem == memory", "group": "inline@1" },
+        { "command": "l0-memory.edit", "when": "view == l0-memory.list && viewItem == memory", "group": "inline@2" },
+        { "command": "l0-memory.delete", "when": "view == l0-memory.list && viewItem == memory", "group": "inline@3" }
+      ]
+    },
+    "configuration": {
+      "title": "l0-memory",
+      "properties": {
+        "l0-memory.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the ltm binary. If empty, the extension uses the bundled binary at ../server/ltm relative to the extension root, or 'ltm' on PATH."
+        },
+        "l0-memory.dbPath": {
+          "type": "string",
+          "default": "",
+          "description": "Override SQLite DB path (sets LTM_DB env var). If empty, uses ~/.long-term-memory/memories.db."
+        },
+        "l0-memory.autoStartMCP": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, the extension will spawn the MCP stdio server in the background on activation. Usually you don't need this — Claude Code starts the server itself."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

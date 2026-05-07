@@ -1,0 +1,105 @@
+# Changelog
+
+All notable changes to this project are documented here. The format is based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
+[Semantic Versioning](https://semver.org/).
+
+## [0.1.0] - 2026-05-07
+
+First public release. Highlights:
+
+- Single Go binary `ltm` that doubles as a stdio MCP server and a CLI for a
+  shared SQLite store; pure Go SQLite (`modernc.org/sqlite`), no CGO.
+- Full-text search backed by SQLite FTS5 with a friendly tokenizer
+  (whitespace-separated tokens become prefix-matched, AND'd; phrases for
+  special characters) and a defensive LIKE fallback.
+- Compact-by-default MCP responses — `memory_get` returns metadata + schema
+  or preview, `memory_search` returns hits with `<<…>>` snippet and BM25
+  score; pass `expand:true` for full records.
+- `memory_query` MCP tool / `ltm query` CLI command for slicing JSON-valued
+  memories with JSON Pointer (RFC 6901) plus a `*` wildcard segment.
+- VSCode extension with platform-specific bundled binaries
+  (darwin-arm64/amd64, linux-arm64/amd64, windows-amd64), auto-discovery,
+  Open-in-editor / Clear-filter commands, and a friendly error UX when the
+  binary cannot be located.
+- GitHub Actions CI matrix (Linux/macOS/Windows × Go 1.22/1.23, Node 20/22)
+  and a tag-driven release pipeline that publishes binaries and the `.vsix`.
+- 51 tests covering store, MCP stdio, JSON Pointer evaluation, and compact
+  view helpers.
+
+### Changed (relative to the prototype)
+- **`memory_search` is now compact by default** (MCP only — CLI behaviour
+  unchanged): the response is an array of compact hits
+  `{key, tags, score, snippet, size_bytes, created_at, updated_at}`. The
+  `snippet` is produced by FTS5's `snippet()` and surrounds the match with
+  `<<...>>` markers; `score` is `-bm25()` so larger = more relevant. Pass
+  `expand:true` to get full Memory records. The LIKE-fallback path produces
+  the same shape with a Go-side highlight and `score=0`.
+- **`memory_get` is now compact by default** (MCP only — CLI behaviour unchanged):
+  the response is `{key, tags, size_bytes, is_json, schema|preview, hint, created_at, updated_at}`
+  — the `value` field is omitted unless the caller passes `expand:true`.
+  - For JSON-valued memories the response includes a small `schema`
+    (top-level keys for objects, length for arrays).
+  - For text it includes a `preview` clipped to ~240 bytes on a word boundary,
+    keeping UTF-8 valid.
+  - This is a deliberate breaking change for MCP consumers that previously
+    relied on `value` always being present in `memory_get`. Migrate by
+    passing `expand:true`, or — better — switch to `memory_query` for slices.
+
+### Added
+- **`memory_query` MCP tool + `ltm query` CLI command**: navigate JSON-valued
+  memories with a JSON Pointer (RFC 6901) path. The path syntax is extended
+  with a `*` wildcard segment that fans out over arrays and objects.
+  Eliminates the need to load and parse a multi-KB graph blob client-side
+  whenever you only need a slice. Examples:
+  - `path=""` or `"/"` → whole document.
+  - `path="/clusters/web-security-caddy/members"` → array of repo names.
+  - `path="/repos/*/n"` → all repo names from a list of objects.
+  Stdlib only (no new dependencies).
+- **FTS5-backed search**. `memory_search` (and `ltm search`) now uses a
+  SQLite FTS5 virtual table with the `unicode61` tokenizer, ranked by BM25.
+  - Free-form queries are tokenized: each whitespace-separated token becomes
+    a prefix match AND'd with the others. Example: `caddy waf` matches
+    entries containing both `caddy*` and `waf*` in any order, ranked by
+    relevance.
+  - Tokens with non-alphanumeric characters are quoted as FTS5 phrases.
+  - The previous `LIKE` substring search is kept as a fallback for queries
+    that fail FTS parsing, so behaviour stays predictable for edge cases.
+  - DBs created before this version are auto-upgraded on open: the FTS index
+    is backfilled the first time `OpenStore` runs.
+- VSCode extension now bundles platform-specific `ltm` binaries
+  (`darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`,
+  `windows-amd64`) so it works without manual setup after `code --install-extension`.
+- `extension/scripts/build-bins.sh` cross-compiles all bundled targets.
+- Friendly error UX in the extension when the `ltm` binary cannot be located
+  (offers a "Set binary path" / "Open output" action).
+- Auto-discovery of `ltm` in common install locations
+  (`/usr/local/bin`, `/opt/homebrew/bin`, `~/.local/bin`, `~/go/bin`).
+- `ltm version` / `ltm --version` flag, and `Version` is injected at build time
+  via `-ldflags="-X main.Version=…"`.
+- Graceful shutdown: the MCP server cancels in-flight DB operations on
+  `SIGINT`/`SIGTERM`.
+- Go test suite for the storage layer and a stdio round-trip test for the MCP
+  protocol.
+- GitHub Actions CI (Go matrix on Linux/macOS/Windows, extension compile) and a
+  tag-driven release workflow that publishes binaries and a `.vsix`.
+- Root `Makefile` with `build`, `test`, `extension-bins`, `vsix` targets.
+
+### Changed
+- `Memory.created_at` / `updated_at` are now stored as **Unix milliseconds**
+  (previously seconds) for better ordering granularity. The extension auto-detects
+  legacy second-precision values and rescales.
+- MCP protocol version bumped from `2024-11-05` to `2025-06-18`.
+- `Store` API now takes `context.Context` on every call.
+- The MCP server validates required tool arguments (`key`, `query`) and returns
+  a structured tool error instead of relying on SQL-level failures.
+- Empty result sets are emitted as `[]` instead of `null` from JSON output.
+- Search ignores SQL `LIKE` wildcards in user queries (`%` and `_` are treated
+  literally via `ESCAPE`).
+- `db.SetMaxOpenConns(1)` to avoid `database is locked` under WAL with
+  concurrent writers.
+
+### Fixed
+- `spawn ltm ENOENT` when the extension was installed from a `.vsix` and no
+  `ltm` was on `PATH` — bundled binary is now picked up automatically.
+

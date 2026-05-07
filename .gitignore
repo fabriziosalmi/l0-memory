@@ -1,0 +1,30 @@
+# Go
+server/ltm
+server/ltm.exe
+server/l0-memory
+server/l0-memory.exe
+*.test
+*.out
+
+# SQLite local
+*.db
+*.db-wal
+*.db-shm
+
+# Node / VSCode extension
+extension/node_modules/
+extension/out/
+extension/*.vsix
+extension/.vscode-test/
+extension/bin/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+.claude/
+*.log
+
+# Env
+.env
+.env.*
