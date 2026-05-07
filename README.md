@@ -233,7 +233,41 @@ blob.
 
 ## VSCode extension
 
-The extension auto-discovers the `ltm` binary in this order:
+The sidebar has two panes:
+- **Pinned** — pinned memories surface here first. Pin/unpin context actions.
+- **Memories** — full list, filterable by scope (toolbar button) and by FTS
+  search (toolbar button). Right-click any item for `Open in editor`,
+  `Link to…`, `Show neighbors`, `Remove a link…`, `Open graph from here`,
+  `Edit`, `Delete`, `Pin`/`Unpin`.
+
+A **status bar item** on the right (`$(database) l0: N (📌 K)`) shows totals
+and clicks back to the sidebar.
+
+### Knowledge graph viewer
+
+The `Open knowledge graph` button (toolbar of the Memories pane, or per-item
+context action) launches a side webview that renders the memory store as a
+D3 force-directed graph:
+
+- Nodes coloured by scope (`user`, `feedback`, `repo:*`, other).
+- Pinned memories outlined; the root node has a thicker outline.
+- Click a node → open the memory in the editor; double-click → re-root the
+  view on that node; drag to reposition; scroll to zoom.
+- Depth (1–4) and direction (`out`/`in`/`both`) controls in the webview
+  toolbar; changes re-fetch via `memory_traverse`.
+
+### Settings
+
+| Setting                  | Default | Description                                                                            |
+|--------------------------|---------|----------------------------------------------------------------------------------------|
+| `l0-memory.binaryPath`   | `""`    | Absolute path to `ltm`. Empty = auto-discovery (bundled, dev layout, common, PATH).    |
+| `l0-memory.dbPath`       | `""`    | Override SQLite DB path (sets `LTM_DB`). Empty = `~/.long-term-memory/memories.db`.    |
+| `l0-memory.defaultScope` | `"user"`| `user` / `ask` / `repo:current`. Determines where new memories go when added from UI. |
+| `l0-memory.autoStartMCP` | `false` | Spawn the MCP server in the background on activation. Usually unnecessary.            |
+
+### Auto-discovery
+
+The extension finds the `ltm` binary in this order:
 
 1. The path set in `l0-memory.binaryPath` (settings).
 2. The bundled binary inside the extension
@@ -246,14 +280,6 @@ The extension auto-discovers the `ltm` binary in this order:
 
 If the binary is missing, the sidebar offers a one-click action to open the
 relevant setting or the output channel.
-
-### Settings
-
-| Setting                  | Default | Description                                                                    |
-|--------------------------|---------|--------------------------------------------------------------------------------|
-| `l0-memory.binaryPath`   | `""`    | Absolute path to `ltm`. Empty = use the discovery rules above.                 |
-| `l0-memory.dbPath`       | `""`    | Override the SQLite DB path (sets `LTM_DB`). Empty = `~/.long-term-memory/`.   |
-| `l0-memory.autoStartMCP` | `false` | Spawn the MCP stdio server in the background on activation. Usually unneeded. |
 
 ## Development
 

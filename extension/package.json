@@ -2,7 +2,7 @@
   "name": "l0-memory",
   "displayName": "l0-memory",
   "description": "Long-term memory for AI assistants. SQLite-backed memory store with MCP server and a VSCode UI to view/edit entries.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "fabriziosalmi",
   "license": "MIT",
   "repository": {
@@ -64,6 +64,15 @@
         "icon": "$(clear-all)"
       },
       {
+        "command": "l0-memory.filterScope",
+        "title": "l0-memory: Filter by scope",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "l0-memory.focusList",
+        "title": "l0-memory: Focus the sidebar"
+      },
+      {
         "command": "l0-memory.edit",
         "title": "l0-memory: Edit"
       },
@@ -88,6 +97,28 @@
         "icon": "$(pin)"
       },
       {
+        "command": "l0-memory.linkTo",
+        "title": "l0-memory: Link to…",
+        "icon": "$(references)"
+      },
+      {
+        "command": "l0-memory.showNeighbors",
+        "title": "l0-memory: Show neighbors"
+      },
+      {
+        "command": "l0-memory.unlinkInteractive",
+        "title": "l0-memory: Remove a link…"
+      },
+      {
+        "command": "l0-memory.openGraph",
+        "title": "l0-memory: Open knowledge graph",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "l0-memory.openGraphFromHere",
+        "title": "l0-memory: Open graph from here"
+      },
+      {
         "command": "l0-memory.startServer",
         "title": "l0-memory: Start MCP server (manual)"
       },
@@ -100,9 +131,12 @@
       "view/title": [
         { "command": "l0-memory.add", "when": "view == l0-memory.list", "group": "navigation@1" },
         { "command": "l0-memory.search", "when": "view == l0-memory.list", "group": "navigation@2" },
-        { "command": "l0-memory.clearFilter", "when": "view == l0-memory.list", "group": "navigation@3" },
-        { "command": "l0-memory.refresh", "when": "view == l0-memory.list", "group": "navigation@4" },
-        { "command": "l0-memory.refresh", "when": "view == l0-memory.pinned", "group": "navigation@1" }
+        { "command": "l0-memory.filterScope", "when": "view == l0-memory.list", "group": "navigation@3" },
+        { "command": "l0-memory.clearFilter", "when": "view == l0-memory.list", "group": "navigation@4" },
+        { "command": "l0-memory.openGraph", "when": "view == l0-memory.list", "group": "navigation@5" },
+        { "command": "l0-memory.refresh", "when": "view == l0-memory.list", "group": "navigation@6" },
+        { "command": "l0-memory.openGraph", "when": "view == l0-memory.pinned", "group": "navigation@1" },
+        { "command": "l0-memory.refresh", "when": "view == l0-memory.pinned", "group": "navigation@2" }
       ],
       "view/item/context": [
         { "command": "l0-memory.openInEditor",
@@ -114,12 +148,24 @@
         { "command": "l0-memory.unpin",
           "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem == memory.pinned",
           "group": "inline@2" },
-        { "command": "l0-memory.edit",
+        { "command": "l0-memory.linkTo",
           "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
           "group": "inline@3" },
+        { "command": "l0-memory.showNeighbors",
+          "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
+          "group": "links@1" },
+        { "command": "l0-memory.unlinkInteractive",
+          "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
+          "group": "links@2" },
+        { "command": "l0-memory.openGraphFromHere",
+          "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
+          "group": "links@3" },
+        { "command": "l0-memory.edit",
+          "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
+          "group": "inline@4" },
         { "command": "l0-memory.delete",
           "when": "view =~ /l0-memory\\.(list|pinned)/ && viewItem =~ /^memory\\./",
-          "group": "inline@4" }
+          "group": "inline@5" }
       ]
     },
     "configuration": {
@@ -139,6 +185,17 @@
           "type": "boolean",
           "default": false,
           "description": "If true, the extension will spawn the MCP stdio server in the background on activation. Usually you don't need this — Claude Code starts the server itself."
+        },
+        "l0-memory.defaultScope": {
+          "type": "string",
+          "default": "user",
+          "enum": ["user", "ask", "repo:current"],
+          "enumDescriptions": [
+            "Always save under the user scope (cross-project notes).",
+            "Ask each time, with a quickPick of existing scopes.",
+            "Use 'repo:<workspace-folder-name>' when a folder is open, else 'user'."
+          ],
+          "description": "Default scope used when adding a memory from the sidebar."
         }
       }
     }
