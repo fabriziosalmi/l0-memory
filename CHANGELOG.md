@@ -4,6 +4,58 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-05-07
+
+VSCode extension UX overhaul. Server is unchanged from 0.2.0; only the
+extension and a few CLI ergonomics moved.
+
+### Added — knowledge graph webview
+- New command `l0-memory: Open knowledge graph` (toolbar button on the
+  Memories pane). Renders the entire memory store as a D3 force-directed
+  graph in a side webview, with nodes coloured by scope and pinned
+  memories highlighted.
+- New context action `l0-memory: Open graph from here` on each memory in
+  the tree — opens the same webview centred on that node, with a depth
+  selector (1–4) and direction filter (out/in/both) wired to
+  `memory_traverse`.
+- In-graph interaction: click a node to open its memory in the editor;
+  double-click to re-root the graph on that node; drag to reposition;
+  scroll to zoom; "reset zoom" toolbar button. D3 v7 ships as a local
+  webview asset (`extension/media/d3.v7.min.js`) — no CDN, CSP-safe.
+
+### Added — link / traverse UI
+- `l0-memory: Link to…` (context action) — pick a target memory from a
+  quickPick (filtered by tags + value preview), then enter a relationship
+  label. Same-scope edges only via the UI; cross-scope is via MCP.
+- `l0-memory: Show neighbors` — opens a markdown summary of every link
+  incident to the selected memory, with arrow direction.
+- `l0-memory: Remove a link…` — quickPick of incident edges, pick one to
+  delete.
+
+### Added — scope-aware UX
+- New setting `l0-memory.defaultScope`: `"user"` (default), `"ask"`, or
+  `"repo:current"`. `"ask"` opens a quickPick of existing scopes plus a
+  `+ New scope…` entry; `"repo:current"` derives the scope from the open
+  workspace folder name.
+- New toolbar button `l0-memory: Filter by scope` on the Memories pane,
+  with a quickPick of every scope currently present in the store.
+- Tree labels show `<scope>/<key>` for non-default scopes so the same key
+  in different scopes is visually distinguishable.
+
+### Added — quick wins
+- Status bar indicator: `$(database) l0: <total> ($(pinned) <pinned>)`
+  on the right side of the bar; click focuses the Memories pane.
+- `Open in editor` now detects JSON-valued memories and opens them with
+  `language: "json"` (folding + outline + syntax highlight) instead of
+  the markdown wrapper.
+
+### Added — server
+- New `ltm pinned [limit]` CLI subcommand backing the Pinned pane and
+  exposing the same filter at the shell.
+
+### Bumped
+- VSCode extension `0.2.0` → `0.3.0`.
+
 ## [0.2.0] - 2026-05-07
 
 The "knowledge graph" release. Adds three orthogonal capabilities that

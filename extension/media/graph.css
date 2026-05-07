@@ -1,0 +1,38 @@
+html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); }
+#toolbar { display: flex; align-items: center; gap: 12px; padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); font-size: 12px; }
+#toolbar .spacer { flex: 1; }
+#toolbar label { display: inline-flex; align-items: center; gap: 4px; }
+#toolbar select, #toolbar button {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+#toolbar button:hover { background: var(--vscode-button-hoverBackground); }
+.info { opacity: 0.8; }
+#graph { width: 100%; height: calc(100vh - 36px); display: block; cursor: grab; }
+#graph:active { cursor: grabbing; }
+
+.link { stroke: var(--vscode-textLink-foreground); stroke-opacity: 0.45; }
+.link-label { fill: var(--vscode-descriptionForeground); font-size: 9px; pointer-events: none; user-select: none; }
+
+.node circle { stroke-width: 1.5px; cursor: pointer; }
+.node.user      circle { fill: var(--vscode-charts-blue);   stroke: var(--vscode-charts-blue); }
+.node.feedback  circle { fill: var(--vscode-charts-orange); stroke: var(--vscode-charts-orange); }
+.node.repo      circle { fill: var(--vscode-charts-green);  stroke: var(--vscode-charts-green); }
+.node.other     circle { fill: var(--vscode-charts-purple); stroke: var(--vscode-charts-purple); }
+.node.pinned circle { stroke: var(--vscode-editorWarning-foreground); stroke-width: 3px; }
+.node.root circle { stroke: var(--vscode-foreground); stroke-width: 3px; }
+.node text {
+  fill: var(--vscode-foreground);
+  font-size: 11px;
+  pointer-events: none;
+  user-select: none;
+  paint-order: stroke;
+  stroke: var(--vscode-editor-background);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}

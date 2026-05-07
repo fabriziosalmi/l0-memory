@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none';
+                   img-src ${cspSource} data:;
+                   style-src ${cspSource} 'unsafe-inline';
+                   script-src ${cspSource};
+                   font-src ${cspSource};">
+    <title>l0-memory graph</title>
+    <link rel="stylesheet" href="${cssUri}" />
+  </head>
+  <body>
+    <div id="toolbar">
+      <span id="info" class="info">loading…</span>
+      <span class="spacer"></span>
+      <label class="depth">
+        depth
+        <select id="depth">
+          <option>1</option>
+          <option selected>2</option>
+          <option>3</option>
+          <option>4</option>
+        </select>
+      </label>
+      <label class="dir">
+        direction
+        <select id="direction">
+          <option value="both" selected>both</option>
+          <option value="out">out</option>
+          <option value="in">in</option>
+        </select>
+      </label>
+      <button id="reset">reset zoom</button>
+    </div>
+    <svg id="graph"></svg>
+    <script src="${d3Uri}"></script>
+    <script src="${jsUri}"></script>
+  </body>
+</html>
