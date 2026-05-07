@@ -119,11 +119,12 @@ func toolDefs() []map[string]any {
 	return []map[string]any{
 		{
 			"name":        "memory_save",
-			"description": "Save or update a long-term memory entry by key. Use to persist facts, preferences, decisions, or context across conversations.",
+			"description": "Save or update a long-term memory entry by (scope, key). Memories are partitioned by scope: \"user\" (default, cross-project) or any string like \"repo:l0-memory\".",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"key":   map[string]any{"type": "string", "description": "Unique identifier for this memory."},
+					"scope": map[string]any{"type": "string", "description": "Namespace for this memory. Defaults to \"user\"."},
+					"key":   map[string]any{"type": "string", "description": "Identifier within the scope."},
 					"value": map[string]any{"type": "string", "description": "Memory content."},
 					"tags":  map[string]any{"type": "string", "description": "Optional comma-separated tags."},
 				},
@@ -131,11 +132,12 @@ func toolDefs() []map[string]any {
 			},
 		},
 		{
-			"name": "memory_get",
-			"description": "Retrieve a memory entry by key. By default returns a compact descriptor (key, tags, size_bytes, schema/preview, hint) without the full value, so the LLM can decide whether to read more. Pass expand:true to get the full record including the value. For JSON-valued memories, prefer memory_query to read specific slices.",
+			"name":        "memory_get",
+			"description": "Retrieve a memory entry by (scope, key). Compact descriptor by default (no value); pass expand:true for the full record. For JSON-valued memories, prefer memory_query to read specific slices.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
+					"scope":  map[string]any{"type": "string", "description": "Defaults to \"user\"."},
 					"key":    map[string]any{"type": "string"},
 					"expand": map[string]any{"type": "boolean", "description": "Return the full record including the value field. Default false."},
 				},
@@ -143,11 +145,12 @@ func toolDefs() []map[string]any {
 			},
 		},
 		{
-			"name": "memory_search",
-			"description": "Full-text search (FTS5, BM25-ranked) over key, value, and tags. Returns compact hits {key, tags, score, snippet (with <<...>> highlight), size_bytes} by default — the snippet shows where the match is so you usually do NOT need to memory_get afterwards. Pass expand:true for full Memory records.",
+			"name":        "memory_search",
+			"description": "Full-text search (FTS5, BM25-ranked). Compact hits with <<...>>-highlighted snippet by default. Pass scope to restrict the search to one namespace; omit it to search every scope. Pass expand:true for full Memory records.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
+					"scope":  map[string]any{"type": "string", "description": "Restrict to a single scope. Empty or omitted = all scopes."},
 					"query":  map[string]any{"type": "string"},
 					"limit":  map[string]any{"type": "integer", "description": "Max results (default 50)."},
 					"expand": map[string]any{"type": "boolean", "description": "Return full Memory records instead of compact hits. Default false."},
@@ -157,33 +160,36 @@ func toolDefs() []map[string]any {
 		},
 		{
 			"name":        "memory_list",
-			"description": "List most recently updated memories.",
+			"description": "List memories sorted by pinned DESC, updated_at DESC. Pass scope to restrict; omit it to list every scope.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
+					"scope": map[string]any{"type": "string", "description": "Restrict to a single scope. Empty or omitted = all scopes."},
 					"limit": map[string]any{"type": "integer", "description": "Max results (default 200)."},
 				},
 			},
 		},
 		{
 			"name":        "memory_delete",
-			"description": "Delete a memory entry by key.",
+			"description": "Delete a memory entry by (scope, key).",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"key": map[string]any{"type": "string"},
+					"scope": map[string]any{"type": "string", "description": "Defaults to \"user\"."},
+					"key":   map[string]any{"type": "string"},
 				},
 				"required": []string{"key"},
 			},
 		},
 		{
-			"name": "memory_query",
-			"description": "Fetch a slice of a JSON-valued memory using a JSON Pointer (RFC 6901) path with optional '*' wildcard segments. Use this for graph-shaped or large-blob memories so you don't have to load and parse the whole value.",
+			"name":        "memory_query",
+			"description": "Slice a JSON-valued memory by JSON Pointer (RFC 6901) path with '*' wildcard segments. Use for graph-shaped or large-blob memories so you don't have to parse the whole value.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"key":  map[string]any{"type": "string", "description": "Memory key whose value is JSON."},
-					"path": map[string]any{"type": "string", "description": "JSON Pointer path. Empty or '/' returns the whole document. Use '*' to fan out: e.g. '/repos/*/n' returns the array of repo names."},
+					"scope": map[string]any{"type": "string", "description": "Defaults to \"user\"."},
+					"key":   map[string]any{"type": "string", "description": "Memory key whose value is JSON."},
+					"path":  map[string]any{"type": "string", "description": "JSON Pointer path. Empty or '/' returns the whole document. Use '*' to fan out: e.g. '/repos/*/n'."},
 				},
 				"required": []string{"key", "path"},
 			},
@@ -216,39 +222,26 @@ func (s *mcpServer) handleToolCall(req *rpcRequest) {
 	})
 }
 
-type saveArgs struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-	Tags  string `json:"tags"`
-}
-
-type keyArg struct {
-	Key string `json:"key"`
-}
-
-type searchArgs struct {
-	Query string `json:"query"`
-	Limit int    `json:"limit"`
-}
-
-type listArgs struct {
-	Limit int `json:"limit"`
-}
-
 func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error) {
 	ctx := s.ctx
 	switch name {
 	case "memory_save":
-		var a saveArgs
+		var a struct {
+			Scope string `json:"scope"`
+			Key   string `json:"key"`
+			Value string `json:"value"`
+			Tags  string `json:"tags"`
+		}
 		if err := json.Unmarshal(args, &a); err != nil {
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 		if strings.TrimSpace(a.Key) == "" {
 			return nil, errors.New("'key' is required")
 		}
-		return s.store.Save(ctx, a.Key, a.Value, a.Tags)
+		return s.store.Save(ctx, a.Scope, a.Key, a.Value, a.Tags)
 	case "memory_get":
 		var a struct {
+			Scope  string `json:"scope"`
 			Key    string `json:"key"`
 			Expand bool   `json:"expand"`
 		}
@@ -258,7 +251,7 @@ func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error)
 		if strings.TrimSpace(a.Key) == "" {
 			return nil, errors.New("'key' is required")
 		}
-		m, err := s.store.Get(ctx, a.Key)
+		m, err := s.store.Get(ctx, a.Scope, a.Key)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				return map[string]any{"found": false}, nil
@@ -271,6 +264,7 @@ func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error)
 		return CompactView(m), nil
 	case "memory_search":
 		var a struct {
+			Scope  string `json:"scope"`
 			Query  string `json:"query"`
 			Limit  int    `json:"limit"`
 			Expand bool   `json:"expand"`
@@ -282,30 +276,37 @@ func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error)
 			return nil, errors.New("'query' is required")
 		}
 		if a.Expand {
-			return s.store.SearchExpanded(ctx, a.Query, a.Limit)
+			return s.store.SearchExpanded(ctx, a.Scope, a.Query, a.Limit)
 		}
-		return s.store.Search(ctx, a.Query, a.Limit)
+		return s.store.Search(ctx, a.Scope, a.Query, a.Limit)
 	case "memory_list":
-		var a listArgs
+		var a struct {
+			Scope string `json:"scope"`
+			Limit int    `json:"limit"`
+		}
 		_ = json.Unmarshal(args, &a)
-		return s.store.List(ctx, a.Limit)
+		return s.store.List(ctx, a.Scope, a.Limit)
 	case "memory_delete":
-		var a keyArg
+		var a struct {
+			Scope string `json:"scope"`
+			Key   string `json:"key"`
+		}
 		if err := json.Unmarshal(args, &a); err != nil {
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 		if strings.TrimSpace(a.Key) == "" {
 			return nil, errors.New("'key' is required")
 		}
-		ok, err := s.store.Delete(ctx, a.Key)
+		ok, err := s.store.Delete(ctx, a.Scope, a.Key)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"deleted": ok}, nil
 	case "memory_query":
 		var a struct {
-			Key  string `json:"key"`
-			Path string `json:"path"`
+			Scope string `json:"scope"`
+			Key   string `json:"key"`
+			Path  string `json:"path"`
 		}
 		if err := json.Unmarshal(args, &a); err != nil {
 			return nil, fmt.Errorf("invalid arguments: %w", err)
@@ -313,7 +314,7 @@ func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error)
 		if strings.TrimSpace(a.Key) == "" {
 			return nil, errors.New("'key' is required")
 		}
-		m, err := s.store.Get(ctx, a.Key)
+		m, err := s.store.Get(ctx, a.Scope, a.Key)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				return map[string]any{"found": false}, nil
