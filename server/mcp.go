@@ -218,6 +218,63 @@ func toolDefs() []map[string]any {
 				"required": []string{"key", "pinned"},
 			},
 		},
+		{
+			"name":        "memory_link",
+			"description": "Create a directed, typed edge between two memories. The (from, to, rel) triple is unique — re-linking is a no-op. Use this to express knowledge-graph relationships such as depends_on, implements, see_also, contradicts. Both endpoints must already exist.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"from_scope": map[string]any{"type": "string", "description": "Scope of the source memory. Defaults to \"user\"."},
+					"from_key":   map[string]any{"type": "string"},
+					"to_scope":   map[string]any{"type": "string", "description": "Scope of the target memory. Defaults to \"user\"."},
+					"to_key":     map[string]any{"type": "string"},
+					"rel":        map[string]any{"type": "string", "description": "Relationship label, e.g. depends_on, implements, see_also."},
+				},
+				"required": []string{"from_key", "to_key", "rel"},
+			},
+		},
+		{
+			"name":        "memory_unlink",
+			"description": "Remove a single (from, to, rel) edge. Returns {deleted: true|false}.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"from_scope": map[string]any{"type": "string"},
+					"from_key":   map[string]any{"type": "string"},
+					"to_scope":   map[string]any{"type": "string"},
+					"to_key":     map[string]any{"type": "string"},
+					"rel":        map[string]any{"type": "string"},
+				},
+				"required": []string{"from_key", "to_key", "rel"},
+			},
+		},
+		{
+			"name":        "memory_links",
+			"description": "List every link incident to a memory, in either direction. Cheap shape: a flat array of {from, to, rel, created_at}. For a wider neighbourhood graph use memory_traverse instead.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"scope": map[string]any{"type": "string", "description": "Defaults to \"user\"."},
+					"key":   map[string]any{"type": "string"},
+				},
+				"required": []string{"key"},
+			},
+		},
+		{
+			"name":        "memory_traverse",
+			"description": "Breadth-first walk from a memory and return the reached subgraph as {root, depth, nodes, edges}. Use to explore a knowledge-graph neighbourhood: e.g. \"everything that depends on tech:caddy at depth 2\".",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"scope":     map[string]any{"type": "string", "description": "Defaults to \"user\"."},
+					"key":       map[string]any{"type": "string"},
+					"depth":     map[string]any{"type": "integer", "description": "Max BFS depth. Default 1."},
+					"rel":       map[string]any{"type": "string", "description": "Filter edges by relationship label. Empty = any."},
+					"direction": map[string]any{"type": "string", "description": "out | in | both. Default both."},
+				},
+				"required": []string{"key"},
+			},
+		},
 	}
 }
 
@@ -352,6 +409,72 @@ func (s *mcpServer) dispatchTool(name string, args json.RawMessage) (any, error)
 		}
 		s.notifyResourcesListChanged()
 		return CompactView(m), nil
+	case "memory_link":
+		var a struct {
+			FromScope string `json:"from_scope"`
+			FromKey   string `json:"from_key"`
+			ToScope   string `json:"to_scope"`
+			ToKey     string `json:"to_key"`
+			Rel       string `json:"rel"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		l, err := s.store.Link(ctx, a.FromScope, a.FromKey, a.ToScope, a.ToKey, a.Rel)
+		if err != nil {
+			return nil, err
+		}
+		return l, nil
+	case "memory_unlink":
+		var a struct {
+			FromScope string `json:"from_scope"`
+			FromKey   string `json:"from_key"`
+			ToScope   string `json:"to_scope"`
+			ToKey     string `json:"to_key"`
+			Rel       string `json:"rel"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		ok, err := s.store.Unlink(ctx, a.FromScope, a.FromKey, a.ToScope, a.ToKey, a.Rel)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"deleted": ok}, nil
+	case "memory_links":
+		var a struct {
+			Scope string `json:"scope"`
+			Key   string `json:"key"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if strings.TrimSpace(a.Key) == "" {
+			return nil, errors.New("'key' is required")
+		}
+		return s.store.Links(ctx, a.Scope, a.Key)
+	case "memory_traverse":
+		var a struct {
+			Scope     string `json:"scope"`
+			Key       string `json:"key"`
+			Depth     int    `json:"depth"`
+			Rel       string `json:"rel"`
+			Direction string `json:"direction"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if strings.TrimSpace(a.Key) == "" {
+			return nil, errors.New("'key' is required")
+		}
+		view, err := s.store.Traverse(ctx, a.Scope, a.Key, a.Depth, a.Rel, a.Direction)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return map[string]any{"found": false}, nil
+			}
+			return nil, err
+		}
+		return view, nil
 	case "memory_query":
 		var a struct {
 			Scope string `json:"scope"`

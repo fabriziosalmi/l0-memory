@@ -119,7 +119,7 @@ func openStoreAt(path string) (*Store, error) {
 		return nil, fmt.Errorf("schema migration: %w", err)
 	}
 
-	// 3. Now safe: indices on `pinned` and triggers wiring memories_fts.
+	// 3. Now safe: indices on `pinned`, FTS triggers, and the graph layer.
 	if _, err := db.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at DESC);
 		CREATE INDEX IF NOT EXISTS idx_memories_pinned  ON memories(pinned, updated_at DESC);
@@ -136,7 +136,7 @@ func openStoreAt(path string) (*Store, error) {
 			INSERT INTO memories_fts(rowid, key, value, tags)
 			VALUES (new.id, new.key, new.value, new.tags);
 		END;
-	`); err != nil {
+	` + linksSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("post-migration schema: %w", err)
 	}

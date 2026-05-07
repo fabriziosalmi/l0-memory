@@ -22,7 +22,7 @@ func extractScope(args []string) (string, []string) {
 
 func runCLI(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: ltm [--scope <name>] <list|get|search|query|save|delete|pin|unpin|path|version> [args...]")
+		return fmt.Errorf("usage: ltm [--scope <name>] <list|get|search|query|save|delete|pin|unpin|link|unlink|links|traverse|path|version> [args...]")
 	}
 
 	scope, args := extractScope(args)
@@ -128,6 +128,48 @@ func runCLI(args []string) error {
 			return err
 		}
 		return writeJSON(os.Stdout, m)
+	case "link":
+		// Same-scope shortcut: ltm [--scope X] link <from_key> <rel> <to_key>
+		if len(rest) < 3 {
+			return fmt.Errorf("usage: ltm [--scope <name>] link <from_key> <rel> <to_key>")
+		}
+		fromKey, rel, toKey := rest[0], rest[1], rest[2]
+		l, err := store.Link(ctx, scope, fromKey, scope, toKey, rel)
+		if err != nil {
+			return err
+		}
+		return writeJSON(os.Stdout, l)
+	case "unlink":
+		if len(rest) < 3 {
+			return fmt.Errorf("usage: ltm [--scope <name>] unlink <from_key> <rel> <to_key>")
+		}
+		ok, err := store.Unlink(ctx, scope, rest[0], scope, rest[2], rest[1])
+		if err != nil {
+			return err
+		}
+		return writeJSON(os.Stdout, map[string]any{"deleted": ok})
+	case "links":
+		if len(rest) < 1 {
+			return fmt.Errorf("usage: ltm [--scope <name>] links <key>")
+		}
+		ls, err := store.Links(ctx, scope, rest[0])
+		if err != nil {
+			return err
+		}
+		return writeJSON(os.Stdout, ls)
+	case "traverse":
+		if len(rest) < 1 {
+			return fmt.Errorf("usage: ltm [--scope <name>] traverse <key> [depth]")
+		}
+		depth := 1
+		if len(rest) > 1 {
+			depth, _ = strconv.Atoi(rest[1])
+		}
+		view, err := store.Traverse(ctx, scope, rest[0], depth, "", "")
+		if err != nil {
+			return err
+		}
+		return writeJSON(os.Stdout, view)
 	case "query":
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: ltm [--scope <name>] query <key> [path]")
