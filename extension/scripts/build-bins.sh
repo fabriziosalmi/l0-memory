@@ -20,6 +20,13 @@ build() {
   (cd "$server_root" && \
     GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
     go build -trimpath -ldflags="-s -w" -o "$dir/$bin" .)
+  # Ad-hoc codesign macOS targets so they survive the macOS Sequoia/Tahoe
+  # provenance gate when spawned by signed apps (Claude Desktop, …).
+  # Requires `codesign` (only present on macOS hosts).
+  if [ "$goos" = "darwin" ] && command -v codesign >/dev/null 2>&1; then
+    codesign --sign - --force --timestamp=none "$dir/$bin" 2>&1 | \
+      grep -v "replacing existing" || true
+  fi
 }
 
 build darwin  arm64

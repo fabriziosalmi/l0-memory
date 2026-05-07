@@ -23,16 +23,20 @@ func main() {
 
 	// Default mode: MCP stdio server. Any subcommand triggers CLI mode.
 	if len(args) == 0 || args[0] == "mcp" {
+		debugf("ltm %s pid=%d starting (LTM_DB=%s)", Version, os.Getpid(), os.Getenv("LTM_DB"))
 		store, err := OpenStore()
 		if err != nil {
+			debugf("OpenStore failed: %v", err)
 			fail(err)
 		}
 		defer store.Close()
+		debugf("OpenStore ok")
 
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
 		if err := runMCP(ctx, store, os.Stdin, os.Stdout); err != nil {
+			debugf("runMCP error: %v", err)
 			fail(err)
 		}
 		return

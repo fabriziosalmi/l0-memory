@@ -20,6 +20,13 @@ help:
 
 build:
 	cd server && go build -trimpath -ldflags="$(LDFLAGS)" -o ltm .
+	@# macOS Sequoia/Tahoe will silently kill an unsigned subprocess spawned
+	@# by a signed app (Claude Desktop, etc). An ad-hoc signature is enough
+	@# to flip it to "trusted" without enrolling in the Apple developer
+	@# program. See SECURITY.md "macOS provenance gate".
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		codesign --sign - --force --timestamp=none server/ltm 2>&1 | grep -v "replacing existing" || true; \
+	fi
 
 vet:
 	cd server && go vet ./...

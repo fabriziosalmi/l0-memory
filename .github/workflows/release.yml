@@ -10,24 +10,33 @@ permissions:
 jobs:
   build-binaries:
     name: ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: linux-amd64
+            os: ubuntu-latest
             goos: linux
             goarch: amd64
           - target: linux-arm64
+            os: ubuntu-latest
             goos: linux
             goarch: arm64
+          # Darwin builds run on macos-latest so we can ad-hoc codesign the
+          # output natively. Ad-hoc signing is enough to survive the macOS
+          # Sequoia/Tahoe provenance gate when spawned by signed hosts
+          # (Claude Desktop, etc).
           - target: darwin-amd64
+            os: macos-latest
             goos: darwin
             goarch: amd64
           - target: darwin-arm64
+            os: macos-latest
             goos: darwin
             goarch: arm64
           - target: windows-amd64
+            os: ubuntu-latest
             goos: windows
             goarch: amd64
             ext: .exe
@@ -48,6 +57,12 @@ jobs:
           mkdir -p ../dist
           go build -trimpath -ldflags="-s -w -X main.Version=${version}" \
             -o "../dist/ltm-${{ matrix.target }}${{ matrix.ext }}" .
+      - name: Ad-hoc codesign (darwin only)
+        if: matrix.goos == 'darwin'
+        run: |
+          codesign --sign - --force --timestamp=none \
+            "dist/ltm-${{ matrix.target }}${{ matrix.ext }}"
+          codesign -d -v "dist/ltm-${{ matrix.target }}${{ matrix.ext }}"
       - name: Archive
         run: |
           cd dist
@@ -66,7 +81,9 @@ jobs:
 
   build-extension:
     name: vsix
-    runs-on: ubuntu-latest
+    # macos-latest so the cross-compiled darwin binaries inside the bundle
+    # can be ad-hoc codesigned by extension/scripts/build-bins.sh.
+    runs-on: macos-latest
     needs: build-binaries
     steps:
       - uses: actions/checkout@v4
@@ -79,7 +96,7 @@ jobs:
           node-version: '20.x'
           cache: npm
           cache-dependency-path: extension/package-lock.json
-      - name: Cross-compile bundled binaries
+      - name: Cross-compile bundled binaries (with darwin codesign)
         working-directory: extension
         run: ./scripts/build-bins.sh
       - name: Install extension deps
