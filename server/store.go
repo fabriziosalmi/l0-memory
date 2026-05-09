@@ -98,19 +98,25 @@ func openStoreAt(path string) (*Store, error) {
 	// 1. Bootstrap-shape table — keeps a pre-0.2 layout from blocking
 	//    migrateSchema. The full set of indices and triggers is created in
 	//    step 3, after migration, when the columns are guaranteed to exist.
+	//    `embedding` is BLOB NULL by design: rows can exist without an
+	//    embedding (endpoint down at save time, pre-0.6 rows awaiting
+	//    backfill). `embedding_model` records which model produced the
+	//    BLOB so a later model swap can detect dim/version mismatches.
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS memories (
-			id          INTEGER PRIMARY KEY AUTOINCREMENT,
-			scope       TEXT NOT NULL DEFAULT 'user',
-			key         TEXT NOT NULL,
-			value       TEXT NOT NULL,
-			tags        TEXT NOT NULL DEFAULT '',
-			pinned      INTEGER NOT NULL DEFAULT 0,
-			archived    INTEGER NOT NULL DEFAULT 0,
-			origin      TEXT NOT NULL DEFAULT '',
-			verified_at INTEGER NOT NULL DEFAULT 0,
-			created_at  INTEGER NOT NULL,
-			updated_at  INTEGER NOT NULL,
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			scope           TEXT NOT NULL DEFAULT 'user',
+			key             TEXT NOT NULL,
+			value           TEXT NOT NULL,
+			tags            TEXT NOT NULL DEFAULT '',
+			pinned          INTEGER NOT NULL DEFAULT 0,
+			archived        INTEGER NOT NULL DEFAULT 0,
+			origin          TEXT NOT NULL DEFAULT '',
+			verified_at     INTEGER NOT NULL DEFAULT 0,
+			embedding       BLOB,
+			embedding_model TEXT NOT NULL DEFAULT '',
+			created_at      INTEGER NOT NULL,
+			updated_at      INTEGER NOT NULL,
 			UNIQUE(scope, key)
 		);
 		CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -181,13 +187,19 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
-	// 0.5 additive migration: archived + origin + verified_at. Plain ALTER
-	// TABLE ADD COLUMN — no rebuild because no UNIQUE constraint changes.
+	// 0.5 additive migration: archived + origin + verified_at.
+	// 0.6 additive migration: embedding (BLOB nullable) + embedding_model.
+	// Both batches use plain ALTER TABLE ADD COLUMN — no rebuild because no
+	// UNIQUE constraint changes. Adds are wrapped in a single transaction
+	// below so a crash midway leaves the schema in a consistent
+	// (pre-migration) state.
 	type addCol struct{ name, ddl string }
 	adds := []addCol{
 		{"archived", "ALTER TABLE memories ADD COLUMN archived INTEGER NOT NULL DEFAULT 0"},
 		{"origin", "ALTER TABLE memories ADD COLUMN origin TEXT NOT NULL DEFAULT ''"},
 		{"verified_at", "ALTER TABLE memories ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0"},
+		{"embedding", "ALTER TABLE memories ADD COLUMN embedding BLOB"},
+		{"embedding_model", "ALTER TABLE memories ADD COLUMN embedding_model TEXT NOT NULL DEFAULT ''"},
 	}
 	pending := adds[:0]
 	for _, a := range adds {

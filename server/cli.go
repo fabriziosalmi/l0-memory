@@ -22,7 +22,7 @@ func extractScope(args []string) (string, []string) {
 
 func runCLI(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: ltm [--scope <name>] <list|pinned|get|search|query|save|delete|rename|verify|supersede|pin|unpin|link|unlink|links|traverse|path|version> [args...]")
+		return fmt.Errorf("usage: ltm [--scope <name>] <list|pinned|get|search|query|save|delete|rename|verify|supersede|pin|unpin|link|unlink|links|traverse|reembed|path|version> [args...]")
 	}
 
 	scope, args := extractScope(args)
@@ -229,6 +229,26 @@ func runCLI(args []string) error {
 			return err
 		}
 		return writeJSON(os.Stdout, view)
+	case "reembed":
+		// ltm [--scope X] reembed [--force]
+		// Empty scope = all scopes. --force re-embeds rows that already
+		// have an embedding (e.g. after model swap). Reads endpoint config
+		// from LTM_EMBEDDING_URL / LTM_EMBEDDING_MODEL.
+		force := false
+		for _, a := range rest {
+			if a == "--force" || a == "-f" {
+				force = true
+			}
+		}
+		client := NewEmbedClientFromEnv()
+		if client.Disabled() {
+			return fmt.Errorf("reembed: LTM_EMBEDDING_URL is not set (or LTM_EMBED_DISABLE=1)")
+		}
+		res, err := reembedAll(ctx, store, client, scope, force)
+		if err != nil {
+			return err
+		}
+		return writeJSON(os.Stdout, res)
 	case "query":
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: ltm [--scope <name>] query <key> [path]")
