@@ -795,6 +795,11 @@ func capHits(hits []SearchHit, limit int) []SearchHit {
 
 // SearchExpanded returns the same ranking as Search but with full Memory
 // records (value included). Empty scope = all scopes.
+//
+// Implementation: re-uses Search to compute the hybrid ranking, then
+// backfills value via a single batched IN-clause SELECT. The N+1 cost is
+// avoided; for limit=50 we do exactly two DB queries (or three if we hit
+// the LIKE fallback inside Search).
 func (s *Store) SearchExpanded(ctx context.Context, scope, query string, limit int) ([]Memory, error) {
 	if limit <= 0 {
 		limit = 50
@@ -802,12 +807,58 @@ func (s *Store) SearchExpanded(ctx context.Context, scope, query string, limit i
 	if strings.TrimSpace(query) == "" {
 		return []Memory{}, nil
 	}
-	if expr := ftsQuery(query); expr != "" {
-		if out, err := s.searchFTSExpanded(ctx, scope, expr, limit); err == nil {
-			return out, nil
-		}
+	hits, err := s.Search(ctx, scope, query, limit)
+	if err != nil {
+		return nil, err
 	}
-	return s.searchLikeExpanded(ctx, scope, query, limit)
+	if len(hits) == 0 {
+		return []Memory{}, nil
+	}
+
+	// Batched value lookup. Build (?, ?, ?) placeholders and pull values
+	// for the surviving hit ids in a single roundtrip.
+	ids := make([]any, len(hits))
+	placeholders := make([]string, len(hits))
+	for i, h := range hits {
+		ids[i] = h.ID
+		placeholders[i] = "?"
+	}
+	q := `SELECT id, value FROM memories WHERE id IN (` + strings.Join(placeholders, ",") + `)`
+	rows, err := s.db.QueryContext(ctx, q, ids...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	valueByID := make(map[int64]string, len(hits))
+	for rows.Next() {
+		var id int64
+		var v string
+		if err := rows.Scan(&id, &v); err != nil {
+			return nil, err
+		}
+		valueByID[id] = v
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]Memory, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, Memory{
+			ID:         h.ID,
+			Scope:      h.Scope,
+			Key:        h.Key,
+			Value:      valueByID[h.ID],
+			Tags:       h.Tags,
+			Pinned:     h.Pinned,
+			Archived:   h.Archived,
+			Origin:     h.Origin,
+			VerifiedAt: h.VerifiedAt,
+			CreatedAt:  h.CreatedAt,
+			UpdatedAt:  h.UpdatedAt,
+		})
+	}
+	return out, nil
 }
 
 func (s *Store) searchFTSCompact(ctx context.Context, scope, expr string, limit int) ([]SearchHit, error) {
