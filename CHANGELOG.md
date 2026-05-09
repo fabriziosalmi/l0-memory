@@ -4,6 +4,142 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-05-09
+
+Hybrid retrieval. Targets the "literal-token-only search" failure mode by
+adding an embedding layer alongside FTS5: a query in one language can
+now find a memory whose body is in another, and a query that doesn't
+share any token with its target can still surface it via cosine
+similarity. The smoking-gun baseline ("idee per migliorare la memoria"
+returning 0 hits despite a semantically-perfect English memory) was
+captured before the work and flips to a top-1 result after.
+
+### Added — schema (additive, no rebuild)
+- `embedding BLOB` nullable — little-endian float32, 4 bytes per dim,
+  no header, dim inferred from `len(blob) / 4`. Null on rows that have
+  not been embedded yet (endpoint down at save time, pre-0.6 rows
+  awaiting backfill).
+- `embedding_model TEXT NOT NULL DEFAULT ''` — records which model
+  produced the BLOB so a later model swap is detectable without
+  per-row metadata. Search-time dim mismatch silently skips the row.
+- Migration is plain `ALTER TABLE ADD COLUMN` for v0.5 → v0.6,
+  appended to the same transaction as the v0.5 adds.
+
+### Added — embed client (server/embed.go)
+- OpenAI-compatible `/v1/embeddings` client. Single implementation
+  works against Ollama, llmproxy, LM Studio, vLLM, and OpenAI proper.
+- Env-driven config:
+  - `LTM_EMBEDDING_URL`   (empty = disabled, FTS-only path)
+  - `LTM_EMBEDDING_MODEL`
+  - `LTM_EMBED_DISABLE=1` (force-off even when URL is set)
+  - `LTM_EMBED_TIMEOUT`   (Go duration, default 5s)
+- Per-request `context.WithTimeout` honours both caller ctx and the
+  configured timeout — whichever fires first wins.
+
+### Added — Store API
+- `SetEmbedding(ctx, scope, key, vec, model)` — UPDATE-only. Does NOT
+  touch `updated_at`; the embedding is an index byproduct, not a
+  content edit.
+- `GetEmbedding(ctx, scope, key)` — returns `(vec, model, err)` with
+  `(nil, "", nil)` on rows that have not been embedded yet.
+- `VectorSearch(ctx, scope, qvec, limit)` — flat cosine over rows
+  with embeddings. Skips archived rows and rows whose stored
+  embedding has a different dimensionality than the query vector
+  (silent model-swap safety).
+- `Search` and `SearchExpanded` consult both FTS and the vector path
+  (when an embed client is attached) and blend ranks via Reciprocal
+  Rank Fusion (k=60). Pinned acts as a tie-breaker on equal RRF
+  scores, NOT an override — semantic relevance is the primary
+  query-time signal.
+
+### Added — auto-embed on save
+- `Store.SetEmbedClient(c)` attaches an `EmbedClient`. When set,
+  `Save` / `SaveWithOptions` call `Embed` synchronously after the
+  SQL insert/update commits and persist the vector via
+  `SetEmbedding`.
+- Best-effort: a failed embed is logged to stderr and swallowed.
+  The contract of Save is "the row is durably stored" — never
+  "the row is durably embedded". Embedding can be reconstructed
+  via `ltm reembed`; persistence cannot.
+- `OpenStore` (the production entry point) auto-attaches an
+  env-driven client. Tests that don't need embeds use `openStoreAt`
+  directly and stay zero-config.
+
+### Added — CLI
+- `ltm [--scope X] reembed [--force]`. Backfills missing
+  embeddings (or all rows when `--force`). Per-row errors are
+  collected without aborting; a transient endpoint hiccup on row 7
+  doesn't lose work done on rows 1–6. Refuses to run with the
+  disabled client.
+
+### Added — search ranking (pre-hybrid groundwork)
+- `memory_search` now sorts pinned memories first within tier in
+  the FTS path. `memory_list` already did this since v0.2.0; the
+  search semantics now match. Within a tier, BM25 then `updated_at`
+  then `id` — order otherwise unchanged.
+
+### Fixed
+- `memory_traverse` with `direction=both` was emitting incident
+  edges twice — once when visiting the from-node (as DirOut) and
+  again when visiting the to-node (as DirIn, reconstructed back to
+  the same `(from, to, rel)` triple). Verified live against
+  production data 2026-05-09 (a real two-hop traverse showed the
+  `derived_from_session` edge twice). Fix: dedup-set on
+  `(from, to, rel)` before append. Zero behaviour change for
+  `direction=out|in` — the bug only surfaced in two-direction
+  traversal.
+
+### Build
+- New `make install` target: builds, copies the binary to
+  `~/.local/bin/ltm`, applies an ad-hoc `codesign` (macOS), and
+  prints a reminder that the MCP host (Claude Desktop / Claude
+  Code) must be quit + relaunched to pick up the new binary.
+  This is the iterative re-deploy seam — the file half — leaving
+  the user the restart half.
+- `install-mcp` and `install-mcp-desktop` now depend on `install`
+  and register the canonical `~/.local/bin/ltm` path instead of
+  the dev-checkout `$(CURDIR)/server/ltm`.
+- `install-mcp-desktop` jq now MERGES into any existing
+  `mcpServers.l0-memory` block (`|= ((. // {}) + {…})`) instead
+  of hard-replacing it. Operator-set keys like `env`
+  (`LTM_EMBEDDING_URL`, etc.) are preserved across re-runs.
+
+### Tests
+- 96 → 133 (+37 under `-race`). Coverage: encode/decode round-trip
+  including malformed-payload rejection; embed client (disabled,
+  env-disable flag, happy path with httptest, empty input, HTTP
+  5xx, empty data, timeout); schema v0.6 columns on fresh DB;
+  SetEmbedding round-trip + ErrNotFound + null-by-default +
+  updated_at-not-touched invariant; reembedAll with skip-already-
+  embedded / force / scope filter / per-row error continuation;
+  Save auto-embed happy + failure + missing-client + disabled-
+  client + update-replaces-vec; cosine basics including dim
+  mismatch; VectorSearch top-K + skip-unembedded-and-archived +
+  scope filter + dim-mismatch skip; rrfBlend score arithmetic +
+  exclusive-hit union + limit; cross-lingual hybrid end-to-end;
+  FTS fallback when embed fails; pure-FTS when no client; hybrid
+  doesn't regress token-exact #1; traverse dedup regression.
+
+### Migration notes
+- v0.5.x DBs upgrade transparently on first open of the v0.6
+  binary. No table rebuild; just two ADD COLUMNs in the same
+  transaction as the v0.5 adds.
+- A v0.5.x binary opening a v0.6 DB continues to work — its
+  explicit-column SELECTs ignore the new columns. INSERTs from
+  v0.5.x leave the new columns at their defaults (`embedding=NULL`,
+  `embedding_model=''`), which is functionally identical to a row
+  awaiting backfill.
+- Existing memories are not embedded automatically. Run
+  `LTM_EMBEDDING_URL=… LTM_EMBEDDING_MODEL=… ltm reembed` once
+  after upgrading to populate the index. Subsequent saves
+  auto-embed when the env is set.
+- For the embedding layer to take effect inside an MCP host, set
+  `LTM_EMBEDDING_URL` / `LTM_EMBEDDING_MODEL` in that host's MCP
+  server `env` block (Claude Desktop:
+  `~/Library/Application Support/Claude/claude_desktop_config.json`;
+  Claude Code: `~/.claude.json` under
+  `mcpServers.l0-memory.env`).
+
 ## [0.5.1] - 2026-05-07
 
 Bugfix release after a draconian audit of the v0.5.0 surface.
