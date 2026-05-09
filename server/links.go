@@ -280,6 +280,19 @@ func (s *Store) Traverse(ctx context.Context, scope, key string, depth int, rel,
 	}
 	addNode(root, 0)
 
+	// seenEdge dedups (from, to, rel) triples. With direction=both, an edge
+	// A→B is reported by Neighbors(A) as DirOut and again by Neighbors(B) as
+	// DirIn during the BFS, which without dedup emits the same edge twice.
+	seenEdge := map[string]struct{}{}
+	addEdge := func(from, to, rel string) {
+		k := from + "\x00" + to + "\x00" + rel
+		if _, ok := seenEdge[k]; ok {
+			return
+		}
+		seenEdge[k] = struct{}{}
+		view.Edges = append(view.Edges, GraphEdge{From: from, To: to, Rel: rel})
+	}
+
 	type frontierItem struct {
 		mem   *Memory
 		depth int
@@ -302,9 +315,9 @@ func (s *Store) Traverse(ctx context.Context, scope, key string, depth int, rel,
 				toURI := makeMemoryURI(n.Memory.Scope, n.Memory.Key)
 				switch n.Direction {
 				case DirOut:
-					view.Edges = append(view.Edges, GraphEdge{From: fromURI, To: toURI, Rel: n.Rel})
+					addEdge(fromURI, toURI, n.Rel)
 				case DirIn:
-					view.Edges = append(view.Edges, GraphEdge{From: toURI, To: fromURI, Rel: n.Rel})
+					addEdge(toURI, fromURI, n.Rel)
 				}
 				if _, already := seen[toURI]; !already {
 					addNode(&n.Memory, f.depth+1)

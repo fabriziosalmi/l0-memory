@@ -198,6 +198,53 @@ func TestTraverseHandlesCycles(t *testing.T) {
 	}
 }
 
+// TestTraverseDedupsEdgesInBothDirection is the regression for the bug where
+// `direction=both` emitted incident edges twice: once when visiting the
+// `from` node (as DirOut) and again when visiting the `to` node (as DirIn,
+// reconstructed back to the same (from, to, rel) triple). Verified against
+// real production data 2026-05-09 — wishlist:bold_ideas → brainstorm_push_depth
+// appeared twice in the edges array.
+func TestTraverseDedupsEdgesInBothDirection(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	for _, k := range []string{"a", "b", "c"} {
+		if _, err := s.Save(ctx, "user", k, "v", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a -> b (derived_from); b -> c (refines).
+	// At depth=2 from a with direction=both, BFS reaches b then c.
+	// Without dedup, edge a→b would be emitted twice (once visiting a as
+	// outgoing, once visiting b as incoming).
+	if _, err := s.Link(ctx, "user", "a", "user", "b", "derived_from"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Link(ctx, "user", "b", "user", "c", "refines"); err != nil {
+		t.Fatal(err)
+	}
+
+	view, err := s.Traverse(ctx, "user", "a", 2, "", DirBoth)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Count occurrences of each (from, to, rel) triple.
+	counts := map[string]int{}
+	for _, e := range view.Edges {
+		k := e.From + "|" + e.To + "|" + e.Rel
+		counts[k]++
+	}
+	for k, n := range counts {
+		if n > 1 {
+			t.Errorf("edge %s emitted %d times, want exactly 1; full edges=%+v", k, n, view.Edges)
+		}
+	}
+	// Sanity: we still emit both edges, just once each.
+	if len(view.Edges) != 2 {
+		t.Errorf("expected exactly 2 distinct edges in subgraph, got %d: %+v", len(view.Edges), view.Edges)
+	}
+}
+
 func TestTraverseCrossScope(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
