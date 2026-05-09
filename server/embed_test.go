@@ -547,6 +547,290 @@ func TestSaveUpdatesEmbeddingOnValueChange(t *testing.T) {
 	}
 }
 
+// ----- Phase 1.C: vector search + RRF blend tests --------------------------
+
+func TestCosineBasics(t *testing.T) {
+	cases := []struct {
+		a, b []float32
+		want float64
+	}{
+		{[]float32{1, 0}, []float32{1, 0}, 1.0},        // identical
+		{[]float32{1, 0}, []float32{-1, 0}, -1.0},      // antiparallel
+		{[]float32{1, 0}, []float32{0, 1}, 0.0},        // orthogonal
+		{[]float32{}, []float32{1, 2}, 0.0},            // empty
+		{[]float32{0, 0}, []float32{1, 2}, 0.0},        // zero norm
+		{[]float32{1, 2, 3}, []float32{1, 2}, 0.0},     // dim mismatch
+	}
+	for _, c := range cases {
+		got := cosine(c.a, c.b)
+		if math.Abs(got-c.want) > 1e-9 {
+			t.Errorf("cosine(%v, %v) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestVectorSearchTopKByCosine(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	// Seed three memories with hand-crafted embeddings that have a known
+	// rank against a target query vector.
+	rows := []struct {
+		key string
+		vec []float32
+	}{
+		{"perfect_match", []float32{1, 0, 0}},
+		{"orthogonal", []float32{0, 1, 0}},
+		{"close_match", []float32{0.9, 0.1, 0.0}},
+	}
+	for _, r := range rows {
+		if _, err := s.Save(ctx, "user", r.key, "v "+r.key, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetEmbedding(ctx, "user", r.key, r.vec, "test-model"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	hits, err := s.VectorSearch(ctx, "", []float32{1, 0, 0}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 3 {
+		t.Fatalf("expected 3 hits, got %d", len(hits))
+	}
+	wantOrder := []string{"perfect_match", "close_match", "orthogonal"}
+	for i, want := range wantOrder {
+		if hits[i].Key != want {
+			t.Errorf("hit %d: got %q want %q (full order: %+v)", i, hits[i].Key, want, keysOf(hits))
+		}
+	}
+	// Score should equal the cosine; perfect_match must be ~1.0.
+	if math.Abs(hits[0].Score-1.0) > 1e-6 {
+		t.Errorf("perfect_match score should be 1.0, got %v", hits[0].Score)
+	}
+}
+
+func TestVectorSearchSkipsUnembeddedAndArchived(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	// One embedded, one un-embedded, one embedded-but-archived.
+	for _, k := range []string{"embedded", "unembedded", "archived"} {
+		_, _ = s.Save(ctx, "user", k, k, "")
+	}
+	_ = s.SetEmbedding(ctx, "user", "embedded", []float32{1, 0, 0}, "m")
+	_ = s.SetEmbedding(ctx, "user", "archived", []float32{1, 0, 0}, "m")
+	if _, err := s.Supersede(ctx, "user", "archived", "successor", "v", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	hits, err := s.VectorSearch(ctx, "", []float32{1, 0, 0}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Key != "embedded" {
+		t.Fatalf("vector search must skip unembedded + archived rows, got %+v", keysOf(hits))
+	}
+}
+
+func TestVectorSearchRespectsScopeFilter(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "u1", "in user", "")
+	_, _ = s.Save(ctx, "feedback", "f1", "in feedback", "")
+	_ = s.SetEmbedding(ctx, "user", "u1", []float32{1, 0, 0}, "m")
+	_ = s.SetEmbedding(ctx, "feedback", "f1", []float32{1, 0, 0}, "m")
+
+	hits, _ := s.VectorSearch(ctx, "feedback", []float32{1, 0, 0}, 10)
+	if len(hits) != 1 || hits[0].Key != "f1" {
+		t.Errorf("scope filter not respected: %+v", keysOf(hits))
+	}
+}
+
+func TestVectorSearchSkipsDimMismatch(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "compatible", "v", "")
+	_, _ = s.Save(ctx, "user", "stale_dim", "v", "")
+	_ = s.SetEmbedding(ctx, "user", "compatible", []float32{1, 0, 0}, "m")
+	_ = s.SetEmbedding(ctx, "user", "stale_dim", []float32{1, 0, 0, 0, 0}, "old-model")
+
+	hits, _ := s.VectorSearch(ctx, "", []float32{1, 0, 0}, 10)
+	if len(hits) != 1 || hits[0].Key != "compatible" {
+		t.Errorf("dim mismatch should be skipped, got %+v", keysOf(hits))
+	}
+}
+
+func TestRRFBlendCombinesBothSources(t *testing.T) {
+	// FTS finds A, B, C in that order. Vec finds B, A, D. With k=60,
+	// expected RRF totals (descending):
+	//   A: 1/61 + 1/62 = 0.03250
+	//   B: 1/62 + 1/61 = 0.03250 (tie with A; pinned/updated breaks)
+	//   C: 1/63        = 0.01587
+	//   D: 1/63        = 0.01587 (tie with C)
+	mk := func(key string, pinned bool, updated int64) SearchHit {
+		return SearchHit{Scope: "user", Key: key, Pinned: pinned, UpdatedAt: updated}
+	}
+	fts := []SearchHit{mk("A", false, 100), mk("B", true, 200), mk("C", false, 50)}
+	vec := []SearchHit{mk("B", true, 200), mk("A", false, 100), mk("D", false, 75)}
+
+	out := rrfBlend(fts, vec, 60, 10)
+	if len(out) != 4 {
+		t.Fatalf("expected 4 unique hits, got %d: %+v", len(out), keysOf(out))
+	}
+	// A and B tie; B has Pinned=true → wins the tie-break.
+	if out[0].Key != "B" || out[1].Key != "A" {
+		t.Errorf("pinned should break a score tie: %+v", keysOf(out))
+	}
+	// C and D tie at 1/63; D has higher updated_at → wins.
+	if out[2].Key != "D" || out[3].Key != "C" {
+		t.Errorf("updated_at should break the next tie: %+v", keysOf(out))
+	}
+}
+
+func TestRRFBlendUnionsExclusiveHits(t *testing.T) {
+	mk := func(key string) SearchHit { return SearchHit{Scope: "user", Key: key} }
+	fts := []SearchHit{mk("only_fts"), mk("both")}
+	vec := []SearchHit{mk("only_vec"), mk("both")}
+
+	out := rrfBlend(fts, vec, 60, 10)
+	keys := map[string]bool{}
+	for _, h := range out {
+		keys[h.Key] = true
+	}
+	for _, want := range []string{"only_fts", "only_vec", "both"} {
+		if !keys[want] {
+			t.Errorf("missing %q from RRF result: %+v", want, keysOf(out))
+		}
+	}
+}
+
+func TestRRFBlendRespectsLimit(t *testing.T) {
+	mk := func(key string) SearchHit { return SearchHit{Scope: "user", Key: key} }
+	hits := make([]SearchHit, 20)
+	for i := range hits {
+		hits[i] = mk(fmt.Sprintf("k%02d", i))
+	}
+	out := rrfBlend(hits, nil, 60, 5)
+	if len(out) != 5 {
+		t.Errorf("limit not enforced, got %d", len(out))
+	}
+}
+
+func TestSearchCrossLingualHybrid(t *testing.T) {
+	// The smoking-gun test for the whole feature: an FTS-token-mismatched
+	// query must still find its semantic target via the vector path. The
+	// fake embedder uses cosine of fixed vectors that we plant.
+	s := newStore(t)
+	ctx := context.Background()
+
+	// Two memories. Their FTS-searchable bodies share zero query tokens
+	// with the IT-shaped query; only the embedding bridge can find them.
+	_, _ = s.Save(ctx, "user", "wishlist", "improve memory ideas", "")
+	_, _ = s.Save(ctx, "user", "unrelated", "caddy webserver config", "")
+
+	wishVec := []float32{1, 0, 0}
+	otherVec := []float32{0, 1, 0}
+	_ = s.SetEmbedding(ctx, "user", "wishlist", wishVec, "m")
+	_ = s.SetEmbedding(ctx, "user", "unrelated", otherVec, "m")
+
+	// Stub embedder: maps query strings to known vectors so we can predict
+	// vector ranks.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req embedRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		// "idee migliore memoria" must map to the same direction as wishVec.
+		var v []float32
+		if strings.Contains(req.Input, "idee") {
+			v = []float32{0.95, 0.05, 0}
+		} else {
+			v = []float32{0, 0.5, 0.5}
+		}
+		_ = json.NewEncoder(w).Encode(embedResponse{
+			Data: []embedResponseItem{{Embedding: v}},
+		})
+	}))
+	defer srv.Close()
+	s.SetEmbedClient(NewEmbedClient(srv.URL, "m", 2*time.Second))
+
+	hits, err := s.Search(ctx, "", "idee migliore memoria", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) == 0 {
+		t.Fatal("hybrid search should not return empty for a vector-bridgeable query")
+	}
+	if hits[0].Key != "wishlist" {
+		t.Errorf("hybrid should rank vector-aligned 'wishlist' first, got order %+v", keysOf(hits))
+	}
+}
+
+func TestSearchFallsBackToFTSWhenEmbedFails(t *testing.T) {
+	// FTS path must still produce results when the embedder errors.
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "fts_target", "alpha bravo charlie", "")
+
+	// Embedder returns 500.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "synthetic", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	s.SetEmbedClient(NewEmbedClient(srv.URL, "m", 500*time.Millisecond))
+
+	hits, err := s.Search(ctx, "", "alpha", 10)
+	if err != nil {
+		t.Fatalf("search must not error when embed errors: %v", err)
+	}
+	if len(hits) != 1 || hits[0].Key != "fts_target" {
+		t.Errorf("FTS-only fallback failed, got %+v", keysOf(hits))
+	}
+}
+
+func TestSearchPureFTSWhenNoEmbedClient(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, _ = s.Save(ctx, "user", "fts_target", "delta echo foxtrot", "")
+	// No SetEmbedClient call.
+	hits, err := s.Search(ctx, "", "delta", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Key != "fts_target" {
+		t.Errorf("nil-client path should match existing FTS behaviour, got %+v", keysOf(hits))
+	}
+}
+
+func TestSearchHybridDoesNotRegressTokenExactRanking(t *testing.T) {
+	// A query with a clear token-exact match must keep that match at #1
+	// even when the vector path proposes alternatives. RRF naturally
+	// favours docs that hit both lists; the token-exact doc usually does.
+	s := newStore(t)
+	ctx := context.Background()
+
+	_, _ = s.Save(ctx, "user", "token_match", "the term needle is right here", "")
+	_, _ = s.Save(ctx, "user", "semantic_neighbor", "loosely related sewing topic", "")
+	_ = s.SetEmbedding(ctx, "user", "token_match", []float32{0.6, 0.8, 0.0}, "m")
+	_ = s.SetEmbedding(ctx, "user", "semantic_neighbor", []float32{0.7, 0.7, 0.1}, "m")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Query embedding closer to semantic_neighbor than token_match,
+		// so a vec-only ranker would put semantic_neighbor first.
+		_ = json.NewEncoder(w).Encode(embedResponse{
+			Data: []embedResponseItem{{Embedding: []float32{0.7, 0.7, 0.1}}},
+		})
+	}))
+	defer srv.Close()
+	s.SetEmbedClient(NewEmbedClient(srv.URL, "m", 2*time.Second))
+
+	hits, err := s.Search(ctx, "", "needle", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) < 1 || hits[0].Key != "token_match" {
+		t.Errorf("RRF should keep token-exact #1 over vec-only neighbour, got %+v", keysOf(hits))
+	}
+}
+
 // Sanity: a stored row should be retrievable by both Get (unaffected) and
 // GetEmbedding (new). We don't want adding the columns to break the existing
 // memory shape.

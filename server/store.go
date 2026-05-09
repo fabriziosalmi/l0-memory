@@ -730,6 +730,19 @@ func isAlphaNum(s string) bool {
 
 // Search returns ranked, snippet-bearing hits without the full value. Empty
 // scope means "search all scopes".
+//
+// When an embedding client is attached (and the query embedding succeeds)
+// the result is the RRF blend of FTS and vector hits — this is what makes
+// cross-lingual queries find their target (an Italian conceptual query
+// against an English-bodied memory). Otherwise the path is pure FTS, with
+// a LIKE fallback for queries that defeat the FTS5 parser.
+//
+// Failure modes that fall back to FTS-only:
+//   - No embed client attached.
+//   - Client is Disabled (LTM_EMBED_DISABLE=1 or empty URL).
+//   - Query embedding errors (endpoint down, timeout, decode failure).
+//   - VectorSearch errors (DB-level).
+// Each is logged once to stderr; the search itself never errors out.
 func (s *Store) Search(ctx context.Context, scope, query string, limit int) ([]SearchHit, error) {
 	if limit <= 0 {
 		limit = 50
@@ -737,12 +750,47 @@ func (s *Store) Search(ctx context.Context, scope, query string, limit int) ([]S
 	if strings.TrimSpace(query) == "" {
 		return []SearchHit{}, nil
 	}
+
+	// FTS is always attempted; it's the back-compat baseline.
+	var ftsHits []SearchHit
 	if expr := ftsQuery(query); expr != "" {
-		if out, err := s.searchFTSCompact(ctx, scope, expr, limit); err == nil {
-			return out, nil
+		hits, err := s.searchFTSCompact(ctx, scope, expr, limit*3)
+		if err == nil {
+			ftsHits = hits
 		}
 	}
-	return s.searchLikeCompact(ctx, scope, query, limit)
+	if ftsHits == nil {
+		hits, err := s.searchLikeCompact(ctx, scope, query, limit*3)
+		if err != nil {
+			return nil, err
+		}
+		ftsHits = hits
+	}
+
+	// Try the vector path. Any failure short-circuits to FTS-only result.
+	if s.embed == nil || s.embed.Disabled() {
+		return capHits(ftsHits, limit), nil
+	}
+	qvec, err := s.embed.Embed(ctx, query)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ltm: search embed-query: %v (falling back to FTS)\n", err)
+		return capHits(ftsHits, limit), nil
+	}
+	vecHits, err := s.VectorSearch(ctx, scope, qvec, limit*3)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ltm: vector search: %v (falling back to FTS)\n", err)
+		return capHits(ftsHits, limit), nil
+	}
+	return rrfBlend(ftsHits, vecHits, 60, limit), nil
+}
+
+// capHits truncates a slice to at most `limit` entries; helper to keep the
+// FTS-only paths consistent with the hybrid path's limit semantics.
+func capHits(hits []SearchHit, limit int) []SearchHit {
+	if len(hits) > limit {
+		return hits[:limit]
+	}
+	return hits
 }
 
 // SearchExpanded returns the same ranking as Search but with full Memory
