@@ -417,6 +417,136 @@ func TestReembedAllRefusesDisabledClient(t *testing.T) {
 	}
 }
 
+func TestSaveAutoEmbedsWhenClientAttached(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	var calls int64
+	srv := makeFakeEmbedServer(t, fakeVec, &calls)
+	defer srv.Close()
+	s.SetEmbedClient(NewEmbedClient(srv.URL, "test-model", 2*time.Second))
+
+	if _, err := s.Save(ctx, "user", "k", "auto-embed me", ""); err != nil {
+		t.Fatal(err)
+	}
+	vec, model, err := s.GetEmbedding(ctx, "user", "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model != "test-model" {
+		t.Errorf("model: got %q want test-model", model)
+	}
+	want := fakeVec("auto-embed me")
+	if len(vec) != len(want) {
+		t.Fatalf("len: got %d want %d", len(vec), len(want))
+	}
+	for i := range want {
+		if vec[i] != want[i] {
+			t.Errorf("dim %d: got %v want %v", i, vec[i], want[i])
+		}
+	}
+	if atomic.LoadInt64(&calls) != 1 {
+		t.Errorf("expected exactly 1 HTTP hit on save, got %d", calls)
+	}
+}
+
+func TestSaveSucceedsEvenIfEmbedFails(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "synthetic", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	s.SetEmbedClient(NewEmbedClient(srv.URL, "test-model", 500*time.Millisecond))
+
+	// Save MUST succeed even though the embed endpoint is broken.
+	m, err := s.Save(ctx, "user", "k", "value-that-cannot-be-embedded", "")
+	if err != nil {
+		t.Fatalf("save should not surface embed errors: %v", err)
+	}
+	if m == nil || m.Key != "k" {
+		t.Fatalf("save returned an unusable row: %+v", m)
+	}
+	// And the row stays embedding-less.
+	vec, model, err := s.GetEmbedding(ctx, "user", "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vec != nil || model != "" {
+		t.Errorf("row should be embedding-less after failed embed: vec=%d-dim model=%q", len(vec), model)
+	}
+}
+
+func TestSaveWithoutEmbedClientIsSilent(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	// No SetEmbedClient call → s.embed is nil. Save must not crash and must
+	// leave the row embedding-less.
+	if _, err := s.Save(ctx, "user", "k", "no embedder configured", ""); err != nil {
+		t.Fatal(err)
+	}
+	vec, model, err := s.GetEmbedding(ctx, "user", "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vec != nil || model != "" {
+		t.Errorf("row should be embedding-less without a client: vec=%d-dim model=%q", len(vec), model)
+	}
+}
+
+func TestSaveWithDisabledEmbedClientIsSilent(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	s.SetEmbedClient(NewEmbedClient("", "any-model", 0)) // empty URL → disabled
+	if _, err := s.Save(ctx, "user", "k", "disabled embedder", ""); err != nil {
+		t.Fatal(err)
+	}
+	vec, _, _ := s.GetEmbedding(ctx, "user", "k")
+	if vec != nil {
+		t.Error("disabled client should not produce an embedding on save")
+	}
+}
+
+// Updating a row should re-embed (the value changed). Pre-existing
+// embeddings on the row should be replaced, not stacked.
+func TestSaveUpdatesEmbeddingOnValueChange(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	var calls int64
+	srv := makeFakeEmbedServer(t, fakeVec, &calls)
+	defer srv.Close()
+	s.SetEmbedClient(NewEmbedClient(srv.URL, "test-model", 2*time.Second))
+
+	if _, err := s.Save(ctx, "user", "k", "first version", ""); err != nil {
+		t.Fatal(err)
+	}
+	v1, _, _ := s.GetEmbedding(ctx, "user", "k")
+
+	if _, err := s.Save(ctx, "user", "k", "second version with different content", ""); err != nil {
+		t.Fatal(err)
+	}
+	v2, _, _ := s.GetEmbedding(ctx, "user", "k")
+
+	if len(v2) == 0 {
+		t.Fatal("update should have produced a new embedding")
+	}
+	// fakeVec is deterministic per input; v1 and v2 must differ.
+	same := len(v1) == len(v2)
+	if same {
+		for i := range v1 {
+			if v1[i] != v2[i] {
+				same = false
+				break
+			}
+		}
+	}
+	if same {
+		t.Error("embedding should change when value changes; got identical bytes")
+	}
+	if atomic.LoadInt64(&calls) != 2 {
+		t.Errorf("expected 2 HTTP hits (one per save), got %d", calls)
+	}
+}
+
 // Sanity: a stored row should be retrievable by both Get (unaffected) and
 // GetEmbedding (new). We don't want adding the columns to break the existing
 // memory shape.

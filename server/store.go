@@ -53,6 +53,18 @@ type SearchHit struct {
 
 type Store struct {
 	db *sql.DB
+	// embed is optional. When non-nil and not Disabled(), Save auto-embeds
+	// the value after the SQL insert/update completes. A nil or disabled
+	// client is fine — the row is saved without an embedding and is
+	// searchable via FTS only (until `ltm reembed` backfills it).
+	embed *EmbedClient
+}
+
+// SetEmbedClient attaches (or detaches, if c is nil or disabled) the
+// embedding client used by Save. Call once after opening the store; tests
+// pass a mock client pointed at httptest.
+func (s *Store) SetEmbedClient(c *EmbedClient) {
+	s.embed = c
 }
 
 // ErrNotFound is returned by Get when no row matches the (scope, key) pair.
@@ -83,7 +95,15 @@ func OpenStore() (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return openStoreAt(path)
+	s, err := openStoreAt(path)
+	if err != nil {
+		return nil, err
+	}
+	// Production wiring: pick up an OpenAI-compatible embeddings endpoint
+	// from the environment. Tests use openStoreAt directly and stay
+	// embed-free unless they call SetEmbedClient explicitly.
+	s.SetEmbedClient(NewEmbedClientFromEnv())
+	return s, nil
 }
 
 func openStoreAt(path string) (*Store, error) {
@@ -385,7 +405,29 @@ func (s *Store) SaveWithOptions(ctx context.Context, scope, key, value, tags str
 	if err != nil {
 		return nil, err
 	}
+	// Best-effort embedding. Failure is silent (logged to stderr) — the
+	// row is saved and FTS-searchable; it just lacks a vector until
+	// `ltm reembed` or the next save with a working endpoint.
+	s.maybeEmbedAfterSave(ctx, scope, key, value)
 	return s.Get(ctx, scope, key)
+}
+
+// maybeEmbedAfterSave is the synchronous embed-on-save hook. No-op when
+// no client is attached or the client is disabled. Errors are logged to
+// stderr and swallowed: the contract of Save is "the row is durably
+// stored", not "the row is durably embedded".
+func (s *Store) maybeEmbedAfterSave(ctx context.Context, scope, key, value string) {
+	if s.embed == nil || s.embed.Disabled() {
+		return
+	}
+	vec, err := s.embed.Embed(ctx, value)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ltm: embed save-path %s/%s: %v\n", scope, key, err)
+		return
+	}
+	if err := s.SetEmbedding(ctx, scope, key, vec, s.embed.Model()); err != nil {
+		fmt.Fprintf(os.Stderr, "ltm: persist embedding %s/%s: %v\n", scope, key, err)
+	}
 }
 
 func (s *Store) Get(ctx context.Context, scope, key string) (*Memory, error) {
