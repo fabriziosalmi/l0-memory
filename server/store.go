@@ -721,7 +721,7 @@ func (s *Store) searchFTSCompact(ctx context.Context, scope, expr string, limit 
 		WHERE memories_fts MATCH ?1
 		  AND (?2 = '' OR m.scope = ?2)
 		  AND m.archived = 0
-		ORDER BY f.rank, m.updated_at DESC, m.id DESC
+		ORDER BY m.pinned DESC, f.rank, m.updated_at DESC, m.id DESC
 		LIMIT ?3
 	`, expr, scope, limit)
 	if err != nil {
@@ -751,7 +751,7 @@ func (s *Store) searchFTSExpanded(ctx context.Context, scope, expr string, limit
 		WHERE memories_fts MATCH ?1
 		  AND (?2 = '' OR m.scope = ?2)
 		  AND m.archived = 0
-		ORDER BY f.rank, m.updated_at DESC, m.id DESC
+		ORDER BY m.pinned DESC, f.rank, m.updated_at DESC, m.id DESC
 		LIMIT ?3
 	`, expr, scope, limit)
 	if err != nil {
@@ -806,7 +806,7 @@ func (s *Store) searchLikeExpanded(ctx context.Context, scope, query string, lim
 		   OR LOWER(tags) LIKE ?1 ESCAPE '\')
 		  AND (?2 = '' OR scope = ?2)
 		  AND archived = 0
-		ORDER BY updated_at DESC, id DESC
+		ORDER BY pinned DESC, updated_at DESC, id DESC
 		LIMIT ?3
 	`, q, scope, limit)
 	if err != nil {

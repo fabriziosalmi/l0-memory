@@ -314,6 +314,53 @@ func TestSearchRanksMostRelevantFirst(t *testing.T) {
 	}
 }
 
+// TestSearchSortsPinnedFirst is the regression for the bug where pinned
+// rule-shaped memories (the load-bearing user-curated ones) lost search
+// ranking to longer dump-shaped memories with denser token matches.
+// Verified live 2026-05-09 — query "brainstorm bold push past safe"
+// returned wishlist:bold_ideas first while pinned feedback:brutal_honesty
+// (conceptually adjacent) didn't surface at all. Pin signals user intent;
+// memory_list already orders pinned-first, memory_search now matches.
+func TestSearchSortsPinnedFirst(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	// Two memories matching "alpha". The unpinned one has way denser
+	// token matches and would win on raw BM25 alone.
+	if _, err := s.Save(ctx, "user", "dump", "alpha alpha alpha alpha alpha alpha lorem ipsum", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(ctx, "user", "rule", "alpha is the load-bearing constraint", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Pin only the rule-shaped one.
+	if _, err := s.Pin(ctx, "user", "rule", true); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Search(ctx, "", "alpha", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) < 2 {
+		t.Fatalf("expected 2 hits, got %d: %+v", len(got), keysOf(got))
+	}
+	if got[0].Key != "rule" {
+		t.Fatalf("pinned memory must rank first regardless of bm25; got order %+v", keysOf(got))
+	}
+	if !got[0].Pinned {
+		t.Errorf("first hit should carry pinned=true in compact view")
+	}
+	// Unpin and verify BM25 wins again — proves the boost is from pinned
+	// state, not from anything else we accidentally changed.
+	if _, err := s.Pin(ctx, "user", "rule", false); err != nil {
+		t.Fatal(err)
+	}
+	got2, _ := s.Search(ctx, "", "alpha", 0)
+	if len(got2) < 2 || got2[0].Key != "dump" {
+		t.Fatalf("after unpin, dense-bm25 'dump' should win again; got %+v", keysOf(got2))
+	}
+}
+
 func TestFTSBackfillsRowsMissingFromIndex(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "migrate.db")
