@@ -1,0 +1,86 @@
+:root {
+  --vp-c-brand-1: #000000;
+  --vp-c-brand-2: #333333;
+  --vp-c-brand-3: #666666;
+  --vp-c-brand-soft: rgba(0, 0, 0, 0.05);
+
+  --vp-font-family-base: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --vp-font-family-mono: "SF Mono", SFMono-Regular, ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace;
+}
+
+.dark {
+  --vp-c-brand-1: #ffffff;
+  --vp-c-brand-2: #cccccc;
+  --vp-c-brand-3: #999999;
+  --vp-c-brand-soft: rgba(255, 255, 255, 0.1);
+}
+
+/* Apple-like cards and layout */
+.VPFeature {
+  border-radius: 12px !important;
+  background-color: var(--vp-c-bg-soft) !important;
+  border: 1px solid var(--vp-c-divider) !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+}
+
+.VPFeature:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+}
+
+.VPHomeHero .name {
+  background: linear-gradient(135deg, var(--vp-c-brand-1), var(--vp-c-brand-2)) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.02em !important;
+}
+
+.VPHomeHero .text {
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--vp-c-text-2) !important;
+}
+
+.VPButton.brand {
+  border-radius: 20px !important;
+  padding: 0 24px !important;
+  font-weight: 600 !important;
+  background-color: var(--vp-c-brand-1) !important;
+  color: var(--vp-c-bg) !important;
+  transition: opacity 0.2s ease !important;
+}
+
+.VPButton.brand:hover {
+  opacity: 0.8;
+}
+
+.VPButton.alt {
+  border-radius: 20px !important;
+  padding: 0 24px !important;
+  font-weight: 600 !important;
+}
+
+/* Typography refinements */
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.01em;
+}
+
+.vp-doc h1 {
+  font-weight: 700;
+  font-size: 2.5rem;
+  margin-bottom: 2rem;
+}
+
+.vp-doc h2 {
+  font-weight: 600;
+  border-bottom: none;
+  margin-top: 3rem;
+}
+
+/* Custom code block styling */
+div[class*="language-"] {
+  border-radius: 10px !important;
+  margin: 1.5rem 0 !important;
+}

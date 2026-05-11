@@ -28,3 +28,4 @@ extension/bin/
 # Env
 .env
 .env.*
+docs/node_modules/
