@@ -6,7 +6,7 @@ export default defineConfig({
   description: "Long-term memory for AI assistants",
   base: '/l0-memory/',
   head: [
-    ['link', { rel: 'icon', href: '/favicon.ico' }],
+    ['link', { rel: 'icon', href: '/l0-memory/favicon.svg' }],
     ['meta', { name: 'theme-color', content: '#000000' }],
     ['meta', { name: 'apple-mobile-web-app-capable', content: 'yes' }],
     ['meta', { name: 'apple-mobile-web-app-status-bar-style', content: 'black' }]
@@ -66,7 +66,7 @@ export default defineConfig({
     ],
 
     footer: {
-      message: 'Released under the MIT License.',
+      message: 'Crafted with precision for AI assistants.',
       copyright: 'Copyright © 2024-present Fabrizio Salmi'
     },
 

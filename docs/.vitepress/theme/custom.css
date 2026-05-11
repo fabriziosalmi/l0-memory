@@ -17,24 +17,47 @@
 
 /* Apple-like cards and layout */
 .VPFeature {
-  border-radius: 12px !important;
+  border-radius: 16px !important;
   background-color: var(--vp-c-bg-soft) !important;
   border: 1px solid var(--vp-c-divider) !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  padding: 24px !important;
 }
 
 .VPFeature:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+  transform: scale(1.02);
+  background-color: var(--vp-c-bg-mute) !important;
+  border-color: var(--vp-c-brand-1) !important;
+}
+
+.VPFeature .icon {
+  background-color: transparent !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-bottom: 20px !important;
+  width: 40px !important;
+  height: 40px !important;
+  color: var(--vp-c-brand-1) !important;
+}
+
+.VPFeature .icon img {
+  width: 32px !important;
+  height: 32px !important;
+  filter: grayscale(1) brightness(0.5);
+}
+
+.dark .VPFeature .icon img {
+  filter: grayscale(1) brightness(1.5);
 }
 
 .VPHomeHero .name {
-  background: linear-gradient(135deg, var(--vp-c-brand-1), var(--vp-c-brand-2)) !important;
+  background: linear-gradient(135deg, var(--vp-c-text-1), var(--vp-c-text-2)) !important;
   -webkit-background-clip: text !important;
   -webkit-text-fill-color: transparent !important;
   font-weight: 800 !important;
-  letter-spacing: -0.02em !important;
+  letter-spacing: -0.04em !important;
+  font-size: 64px !important;
 }
 
 .VPHomeHero .text {
