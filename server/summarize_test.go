@@ -13,6 +13,13 @@ func TestPreviewShortStringIsReturnedVerbatim(t *testing.T) {
 	}
 }
 
+func TestPreviewEmptyString(t *testing.T) {
+	got := preview("", 50)
+	if got != "" {
+		t.Fatalf("got %q, want empty string", got)
+	}
+}
+
 func TestPreviewTrimsAndTruncates(t *testing.T) {
 	in := "  " + strings.Repeat("a", 500) + "  "
 	got := preview(in, 50)
