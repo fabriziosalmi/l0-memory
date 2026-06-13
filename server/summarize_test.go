@@ -55,6 +55,22 @@ func TestPreviewKeepsValidUTF8(t *testing.T) {
 	}
 }
 
+func TestPreviewExactUTF8Boundary(t *testing.T) {
+	// "à" is 2 bytes in UTF-8; 23 bytes = 11 full "à" + 1 extra byte → unsafe if not rune-aware
+	in := strings.Repeat("à", 12) // 24 bytes total
+	got := preview(in, 23)
+	// Should not panic or contain replacement char U+FFFD
+	for _, r := range got {
+		if r == '�' {
+			t.Errorf("preview produced invalid UTF-8 rune: %q", got)
+		}
+	}
+	// Must end with ellipsis and be <= 24 bytes (23 + 1 for ellipsis)
+	if len(got) > 24 {
+		t.Errorf("preview too long: %d bytes (%q)", len(got), got)
+	}
+}
+
 func TestSummarizeJSONObject(t *testing.T) {
 	got := summarizeJSON(`{"alpha":1,"beta":2,"gamma":3}`)
 	want := map[string]any{
