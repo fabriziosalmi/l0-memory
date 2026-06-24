@@ -1,11 +1,11 @@
 # l0-memory developer Makefile.
 # Convenience targets only — CI does the canonical builds.
 
-VERSION    ?= 0.7.0
+VERSION    ?= 0.8.0
 LDFLAGS    := -s -w -X main.Version=$(VERSION)
 INSTALL_BIN := $(HOME)/.local/bin/ltm
 
-.PHONY: help build test vet server-bin extension-bins extension-compile vsix clean install install-mcp install-mcp-desktop
+.PHONY: help build test vet server-bin extension-bins extension-compile vsix clean install install-mcp install-mcp-desktop install-claude
 
 help:
 	@echo "Targets:"
@@ -18,6 +18,7 @@ help:
 	@echo "  install           — build + copy binary to $(INSTALL_BIN) + codesign"
 	@echo "  install-mcp       — register the installed ltm with Claude Code (depends on install)"
 	@echo "  install-mcp-desktop — register the installed ltm with Claude Desktop (depends on install)"
+	@echo "  install-claude    — install the Claude Code auto-recall hook + /checkpoint skill"
 	@echo "  clean             — remove server binary, extension/bin, .vsix files"
 
 build:
@@ -64,6 +65,11 @@ install-mcp: install
 	@echo "Registering ltm MCP server with Claude Code…"
 	@command -v claude >/dev/null 2>&1 || { echo "claude CLI not found in PATH" >&2; exit 1; }
 	claude mcp add l0-memory $(INSTALL_BIN) mcp
+
+install-claude:
+	@# Install the Claude Code auto-recall hook + /checkpoint skill into
+	@# ~/.claude (see integrations/claude-code/). Idempotent.
+	integrations/claude-code/install.sh
 
 install-mcp-desktop: install
 	@# Merge into existing l0-memory block instead of overwriting it. This
