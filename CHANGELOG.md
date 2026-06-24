@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-06-24
+
+Claude Code integration: automatic recall + a `/checkpoint` skill. No runtime or
+schema changes — the `ltm` binary and its store are identical to v0.7.0; this
+ships an opt-in host integration on top.
+
+### Added
+- `integrations/claude-code/` — a first-class Claude Code integration:
+  - `l0-recall.py`, a `SessionStart` hook that injects your **persona** (pinned
+    `user`-scope entries) and the current **project** memory (`repo:<slug>`,
+    derived from the git worktree basename, pinned first) into every session. It
+    reads through the `ltm` CLI (`pinned` / `list` are pure SQLite reads — no
+    embedding endpoint needed), truncates each entry (anti-bloat), and fails open
+    so it can never block a session.
+  - `skills/checkpoint/SKILL.md`, a `/checkpoint` skill that synthesizes a
+    durable state snapshot, saves it to the right scope (update-not-duplicate),
+    and pins the durable entry. Includes a never-persist-secrets rule.
+  - `install.sh` (idempotent) and a `make install-claude` target.
+- Documentation: the "Automatic recall + `/checkpoint`" section in the Claude
+  Code guide, plus the integration's own `README.md`.
+
+### Changed
+- Version bumped to 0.8.0 in the Makefile and the VS Code extension manifest
+  (`extension/package.json`).
+- CI runners bumped to Node 24; a test for `preview` with empty input (#6); docs
+  deployment fixes.
+
 ## [0.7.0] - 2026-05-11
 
 Documentation site. A VitePress guide + reference published to GitHub Pages

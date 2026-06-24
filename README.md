@@ -63,6 +63,15 @@ make install-mcp
 # equivalent to: claude mcp add l0-memory $(pwd)/server/ltm mcp
 ```
 
+For **automatic** recall, also install the optional integration — a
+`SessionStart` hook that injects your persona (pinned `user` scope) and the
+current project's memory (`repo:<slug>`, pinned first), plus a `/checkpoint`
+skill to save state at the end of a session:
+
+```sh
+make install-claude   # see integrations/claude-code/
+```
+
 ### Claude Desktop
 
 ```sh
