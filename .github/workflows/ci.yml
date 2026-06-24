@@ -18,6 +18,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         go: ['1.22.x', '1.23.x']
+        # Go 1.22's darwin linker emits test binaries without an LC_UUID load
+        # command, which the dyld on current `macos-latest` images aborts
+        # (`signal: abort trap` before any test runs). Go 1.23+ is fine. Keep
+        # macOS + go 1.22 coverage by pinning that one combo to macos-14, whose
+        # dyld still accepts the binary.
+        exclude:
+          - os: macos-latest
+            go: '1.22.x'
+        include:
+          - os: macos-14
+            go: '1.22.x'
     defaults:
       run:
         working-directory: server
