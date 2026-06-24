@@ -29,7 +29,7 @@ ltm get <key>
 ```
 
 ### `search`
-Search memories using FTS5.
+Search memories. Uses FTS5 by default, or hybrid (FTS5 + vector) when an embedding endpoint is configured — see [Hybrid Retrieval](/guide/features-hybrid).
 ```sh
 ltm search <query> [limit]
 ```
@@ -83,6 +83,12 @@ ltm unlink <from_key> <rel> <to_key>
 View the knowledge graph starting from a node.
 ```sh
 ltm traverse <key> [depth]
+```
+
+### `reembed`
+Backfill embeddings for [hybrid retrieval](/guide/features-hybrid). Embeds rows that don't have a vector yet, or all rows with `--force`. Requires a configured embedding endpoint.
+```sh
+ltm reembed [--force]
 ```
 
 ### `path`

@@ -12,9 +12,12 @@ scope, can be pinned, linked into a typed graph, and tracked for freshness.
 A VSCode extension provides a sidebar UI, including a force-directed
 visualisation of the graph.
 
-The store is local and plaintext. There is no network listener, no
-embeddings, no vector database. The Go side has zero CGO dependencies; the
-binary cross-compiles to every supported platform.
+The store is local and plaintext. By default there is no network listener
+and no embeddings — search is pure SQLite FTS5. Point `LTM_EMBEDDING_URL`
+at an OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, …) to opt into
+hybrid retrieval, which blends FTS5 with vector similarity. The Go side has
+zero CGO dependencies; the binary cross-compiles to every supported
+platform.
 
 ## Repository layout
 
@@ -92,7 +95,7 @@ Point the host at `ltm` with args `["mcp"]`. Example config snippet:
 |--------------------|-------------------------------------|----------------------------------------------|-----------|
 | `memory_save`      | `key`, `value`                      | `scope`, `tags`, `origin`, `origin_agent`    | Insert or update by `(scope, key)`. `origin`/`origin_agent` record provenance. |
 | `memory_get`       | `key`                               | `scope`, `expand`                            | Compact descriptor by default; pass `expand:true` for the full record. |
-| `memory_search`    | `query`                             | `scope`, `limit`, `expand`                   | FTS5 search over key, value, tags. Compact hits with snippet and score. |
+| `memory_search`    | `query`                             | `scope`, `limit`, `expand`                   | Search over key, value, tags. FTS5 by default; hybrid (FTS5 + vector) when an embedding endpoint is configured. Compact hits with snippet and score. |
 | `memory_list`      | —                                   | `scope`, `limit`                             | Most recently updated entries, pinned first, archived hidden. |
 | `memory_delete`    | `key`                               | `scope`                                      | Remove an entry. Cascades to incident links. |
 | `memory_query`     | `key`, `path`                       | `scope`                                      | Slice a JSON-valued memory by JSON Pointer (RFC 6901) plus `*` wildcard. |
@@ -127,6 +130,35 @@ calling `memory_get`. The server emits
 - Results order: FTS5 rank, then `updated_at DESC`.
 - A query that fails to parse as FTS5 falls back to a case-insensitive
   `LIKE` substring scan with `%` and `_` treated literally.
+
+### Hybrid retrieval
+
+FTS5 only matches literal tokens and their prefixes, so a cross-lingual or
+paraphrased query that shares no token with its target returns nothing —
+`idee per migliorare la memoria` finds no match for a semantically perfect
+English memory. Set `LTM_EMBEDDING_URL` (and `LTM_EMBEDDING_MODEL`) to an
+OpenAI-compatible `/v1/embeddings` endpoint — Ollama, LM Studio, vLLM,
+llmproxy, or OpenAI itself — to turn on hybrid retrieval:
+
+- On every `memory_save`, the value is embedded and the vector stored in
+  the same row. Best-effort: a failed embed never blocks the save, only the
+  vector is skipped.
+- `memory_search` then runs FTS5 **and** a flat cosine vector search and
+  blends the two rankings with Reciprocal Rank Fusion (k=60). Pinned status
+  is only a tie-breaker on equal RRF score, not an override.
+- With the env unset (or `LTM_EMBED_DISABLE=1`) the vector path is skipped
+  entirely and search is pure FTS5 — no behavioural change from earlier
+  versions.
+
+Existing memories are not embedded retroactively. After enabling the
+endpoint, run `ltm reembed` once to backfill; subsequent saves auto-embed.
+
+| Variable              | Default | Description |
+|-----------------------|---------|-------------|
+| `LTM_EMBEDDING_URL`   | (empty) | OpenAI-compatible `/v1/embeddings` base URL. Empty = FTS-only. |
+| `LTM_EMBEDDING_MODEL` | (empty) | Embedding model name passed to the endpoint. |
+| `LTM_EMBED_DISABLE`   | (empty) | `1` forces the vector path off even when a URL is set. |
+| `LTM_EMBED_TIMEOUT`   | `5s`    | Per-request timeout (Go duration). |
 
 ### Compact responses
 
@@ -214,6 +246,7 @@ ltm link <from_key> <rel> <to_key>         # same-scope edge (cross-scope is via
 ltm unlink <from_key> <rel> <to_key>
 ltm links <key>
 ltm traverse <key> [depth]                 # JSON: {root, depth, nodes, edges}
+ltm reembed [--force]                      # backfill embeddings for hybrid retrieval
 ltm path                                   # prints the SQLite DB path
 ltm version
 ```

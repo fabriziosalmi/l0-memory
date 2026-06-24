@@ -12,6 +12,10 @@ These variables affect the behavior of the `ltm` binary, whether run as a CLI or
 | `LTM_SCOPE` | Sets the default scope for all commands. | `user` |
 | `LTM_DEBUG` | If set to `1`, enables verbose debug logging to stderr. | (empty) |
 | `LTM_LOG_FILE` | Path to a file where debug logs should be appended. | (empty) |
+| `LTM_EMBEDDING_URL` | OpenAI-compatible `/v1/embeddings` base URL. Enables [hybrid retrieval](/guide/features-hybrid). Empty = FTS-only. | (empty) |
+| `LTM_EMBEDDING_MODEL` | Embedding model name passed to the endpoint. | (empty) |
+| `LTM_EMBED_DISABLE` | Set to `1` to force the vector path off even when a URL is configured. | (empty) |
+| `LTM_EMBED_TIMEOUT` | Per-request embedding timeout as a Go duration (e.g. `3s`). | `5s` |
 
 ::: info Debugging
 Setting `LTM_LOG_FILE` automatically enables `LTM_DEBUG`. This is useful for troubleshooting MCP connection issues where stderr might be swallowed by the host.

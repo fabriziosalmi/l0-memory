@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-05-11
+
+Documentation site. A VitePress guide + reference published to GitHub Pages
+from `docs/`, covering install, MCP-host integration, the knowledge graph,
+scopes/freshness, the CLI, the MCP tools, and configuration. No runtime or
+schema changes — the `ltm` binary and its store are identical to v0.6.0.
+
+### Added
+- `docs/` VitePress site (guide + reference) with local search, an
+  Apple-like theme, and Lucide-style SVG iconography.
+- GitHub Pages deployment workflow that builds and publishes the site.
+
+### Changed
+- Version bumped to 0.7.0 in the Makefile and the VS Code extension
+  manifest (`extension/package.json`).
+
 ## [0.6.0] - 2026-05-09
 
 Hybrid retrieval. Targets the "literal-token-only search" failure mode by

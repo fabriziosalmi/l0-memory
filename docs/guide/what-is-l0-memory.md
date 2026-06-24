@@ -21,6 +21,9 @@ Because l0-memory speaks MCP, a memory saved while working in **Claude Code** is
 ### Knowledge Graph
 Memories aren't just isolated snippets. They can be linked with meaningful relationships like `depends_on`, `implements`, or `supersedes`. This allows the AI to traverse related context, just like a human developer would.
 
+### Hybrid Search
+Out of the box, search is pure SQLite FTS5 — fast, local, literal-token matching. Configure an optional OpenAI-compatible embedding endpoint and search becomes **hybrid**, fusing full-text and vector similarity so paraphrased and cross-lingual queries still find the right memory. See [Hybrid Retrieval](/guide/features-hybrid).
+
 ### Flexible Scoping
 Memories can be global (`user`), project-specific (`repo:name`), or host-specific (`desktop`). This prevents "context pollution" while still allowing global facts to be available everywhere.
 

@@ -25,7 +25,7 @@
 Inserts or updates a memory identified by `(scope, key)`. The assistant can also provide `tags`, `origin`, and `origin_agent` to track how the memory was created.
 
 ### `memory_search`
-Uses SQLite FTS5 for efficient prefix matching across keys, values, and tags. By default, it returns a compact representation with a text snippet and a relevance score.
+Uses SQLite FTS5 for efficient prefix matching across keys, values, and tags. By default, it returns a compact representation with a text snippet and a relevance score. When an embedding endpoint is configured it becomes **hybrid**, blending FTS5 with vector similarity via Reciprocal Rank Fusion — see [Hybrid Retrieval](/guide/features-hybrid).
 
 ### `memory_query`
 Allows extracting specific parts of a JSON-valued memory using JSON Pointers (RFC 6901). Supports `*` wildcards for array/object traversal.

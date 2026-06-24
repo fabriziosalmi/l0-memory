@@ -41,6 +41,7 @@ export default defineConfig({
         items: [
           { text: 'Knowledge Graph', link: '/guide/features-graph' },
           { text: 'Scopes & Freshness', link: '/guide/features-scopes' },
+          { text: 'Hybrid Retrieval', link: '/guide/features-hybrid' },
           { text: 'VS Code Extension', link: '/guide/features-vscode' }
         ]
       },

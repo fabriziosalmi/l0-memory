@@ -26,8 +26,10 @@ Memories are partitioned by `(scope, key)`. This allows the same key to exist in
 - `repo:<name>`: Context specific to a project.
 - `desktop`: Specific to a machine or host.
 
-### Full-Text Search (FTS5)
+### Search: FTS5 + optional vectors
 Search is powered by SQLite's FTS5 extension with the `unicode61` tokenizer. It supports prefix matching and ranks results using BM25.
+
+When an OpenAI-compatible embedding endpoint is configured, search becomes **hybrid**: FTS5 and a cosine vector search run together and their rankings are fused with Reciprocal Rank Fusion. The vector path is entirely optional and off by default. See [Hybrid Retrieval](/guide/features-hybrid).
 
 ### Knowledge Graph
 Memories can be linked using typed, directional edges. This creates a graph structure that AI assistants can traverse to understand relationships between disparate pieces of information.
@@ -40,6 +42,6 @@ Memories can be linked using typed, directional edges. This creates a graph stru
 ## Security
 
 **l0-memory** prioritizes privacy:
-- **Local Only:** No network listener, no telemetry, no cloud sync.
+- **Local Only:** No network listener and no telemetry. The only outbound traffic is to the embedding endpoint you opt into for [hybrid retrieval](/guide/features-hybrid) — point it at a local model (Ollama, LM Studio, …) to keep everything on your machine.
 - **Plaintext:** Data is stored as provided, allowing easy inspection and backup.
 - **Provenance:** `origin` and `origin_agent` fields track which tool or model created the memory.

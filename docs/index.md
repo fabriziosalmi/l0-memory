@@ -15,7 +15,7 @@ hero:
 
 features:
   - title: Local-First & Private
-    details: Backed by a single Go binary and a SQLite database. No network listeners, no embeddings, no external dependencies.
+    details: Backed by a single Go binary and a SQLite database. No network listener, no telemetry, no cloud — embeddings are strictly opt-in.
     icon:
       src: /icons/shield.svg
   - title: Model Context Protocol
@@ -30,6 +30,10 @@ features:
     details: Partition memories by scope (user, repo, desktop). Track staleness with verification and pinning.
     icon:
       src: /icons/history.svg
+  - title: Hybrid Retrieval
+    details: Pure SQLite FTS5 out of the box. Point it at an OpenAI-compatible embeddings endpoint to blend full-text and vector search via Reciprocal Rank Fusion.
+    icon:
+      src: /icons/cpu.svg
   - title: VS Code Extension
     details: A professional TreeView UI with built-in search, filtering, and a D3.js based graph visualization.
     icon:
