@@ -2,7 +2,7 @@
   "name": "l0-memory",
   "displayName": "l0-memory",
   "description": "Long-term memory for AI assistants. SQLite-backed memory store with MCP server and a VSCode UI to view/edit entries.",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "publisher": "fabriziosalmi",
   "license": "MIT",
   "repository": {

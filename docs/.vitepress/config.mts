@@ -33,6 +33,7 @@ export default defineConfig({
         items: [
           { text: 'Claude Code', link: '/guide/integration-claude-code' },
           { text: 'Claude Desktop', link: '/guide/integration-claude-desktop' },
+          { text: 'Git Hooks', link: '/guide/integration-git' },
           { text: 'Other MCP Hosts', link: '/guide/integration-other' }
         ]
       },
@@ -42,7 +43,8 @@ export default defineConfig({
           { text: 'Knowledge Graph', link: '/guide/features-graph' },
           { text: 'Scopes & Freshness', link: '/guide/features-scopes' },
           { text: 'Hybrid Retrieval', link: '/guide/features-hybrid' },
-          { text: 'VS Code Extension', link: '/guide/features-vscode' }
+          { text: 'VS Code Extension', link: '/guide/features-vscode' },
+          { text: 'REST API & Web Clipper', link: '/guide/features-web-clipper' }
         ]
       },
       {

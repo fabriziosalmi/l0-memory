@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.1] - 2026-06-30
+
+Offline and airgapped features: local REST API server daemon, Manifest V3 Web Clipper
+browser extension, automatic local conflict resolution (Auto-Supersede), and local Git hooks.
+
+### Added
+- Local REST HTTP/JSON API server under `ltm serve [port]`. Exposes endpoints for local health, memories CRUD and FTS/vector search.
+- Manifest V3 browser extension (`extension-browser/`) for offline note-taking and right-click text selection clipping.
+- Local conflict resolution (Auto-Supersede) in Go database store using Jaccard token overlap (and vector cosine similarity if active).
+- Local Git hooks integration (`integrations/git/`) for capturing commit SHA and messages into the repository memory scope.
+
 ## [0.8.0] - 2026-06-24
 
 Claude Code integration: automatic recall + a `/checkpoint` skill. No runtime or

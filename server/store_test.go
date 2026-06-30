@@ -12,6 +12,7 @@ import (
 
 func newStore(t *testing.T) *Store {
 	t.Helper()
+	t.Setenv("LTM_CONFLICT_DISABLE", "1")
 	dir := t.TempDir()
 	s, err := openStoreAt(filepath.Join(dir, "test.db"))
 	if err != nil {
@@ -989,4 +990,70 @@ func keysOfMemories(ms []Memory) []string {
 		out[i] = m.Key
 	}
 	return out
+}
+
+func TestConflictResolutionAutoSupersede(t *testing.T) {
+	s := newStore(t)
+	t.Setenv("LTM_CONFLICT_DISABLE", "")
+	ctx := context.Background()
+
+	// 1. Save original memory
+	_, err := s.Save(ctx, "user", "original-key", "This is some very specific documentation about setting up Caddy server with WAF plugin locally.", "caddy,waf")
+	if err != nil {
+		t.Fatalf("save 1 failed: %v", err)
+	}
+
+	// 2. Save a highly similar memory with a different key (approx 90% word overlap)
+	m2, err := s.Save(ctx, "user", "similar-key", "This is some very specific documentation about setting up Caddy server with WAF plugin on localhost.", "caddy,waf")
+	if err != nil {
+		t.Fatalf("save 2 failed: %v", err)
+	}
+
+	// 3. Verify auto-supersede occurred
+	// m2 (similar-key) should have superseded m1 (original-key)
+	if m2.Key != "similar-key" {
+		t.Fatalf("expected new key to be similar-key, got %q", m2.Key)
+	}
+
+	// Fetch old memory, it should be archived
+	oldMem, err := s.Get(ctx, "user", "original-key")
+	if err != nil {
+		t.Fatalf("failed to get original key: %v", err)
+	}
+	if !oldMem.Archived {
+		t.Errorf("expected original memory to be archived")
+	}
+
+	// Check if they are linked with "supersedes" relation
+	links, err := s.Links(ctx, "user", "similar-key")
+	if err != nil {
+		t.Fatalf("failed to list links: %v", err)
+	}
+	
+	foundLink := false
+	for _, l := range links {
+		if l.ToKey == "original-key" && l.Rel == "supersedes" {
+			foundLink = true
+			break
+		}
+	}
+	if !foundLink {
+		t.Errorf("expected to find a 'supersedes' link from similar-key to original-key, got links: %+v", links)
+	}
+
+	// 4. Test with conflict resolution disabled
+	t.Setenv("LTM_CONFLICT_DISABLE", "1")
+	_, err = s.Save(ctx, "user", "another-key", "This is some very specific documentation about setting up Caddy server with WAF plugin on localhost.", "caddy,waf")
+	if err != nil {
+		t.Fatalf("save 3 failed: %v", err)
+	}
+
+	// Verify that m2 was NOT archived this time (since conflict check was disabled)
+	m2After, err := s.Get(ctx, "user", "similar-key")
+	if err != nil {
+		t.Fatalf("failed to get similar-key: %v", err)
+	}
+	if m2After.Archived {
+		t.Errorf("expected similar-key to NOT be archived when conflict resolution is disabled")
+	}
 }

@@ -3,6 +3,7 @@ server/ltm
 server/ltm.exe
 server/l0-memory
 server/l0-memory.exe
+server/l0-memory-server
 *.test
 *.out
 
@@ -31,3 +32,7 @@ extension/bin/
 docs/node_modules/
 docs/.vitepress/dist
 docs/.vitepress/cache
+
+# Local ideas (not tracked)
+/idee.md
+

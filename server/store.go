@@ -381,6 +381,41 @@ func (s *Store) SaveWithOptions(ctx context.Context, scope, key, value, tags str
 	if key == "" {
 		return nil, fmt.Errorf("key is required")
 	}
+
+	// Conflict resolution check (enabled by default unless LTM_CONFLICT_DISABLE=1)
+	// We only run conflict detection if the key being saved does not already exist
+	// (either active or archived) in the database. Overwriting same key is a regular update.
+	if os.Getenv("LTM_CONFLICT_DISABLE") != "1" {
+		var exists int
+		err := s.db.QueryRowContext(ctx, `SELECT 1 FROM memories WHERE scope = ? AND key = ?`, scope, key).Scan(&exists)
+		if err == sql.ErrNoRows {
+			var newVec []float32
+			if s.embed != nil && !s.embed.Disabled() {
+				var embedErr error
+				newVec, embedErr = s.embed.Embed(ctx, value)
+				if embedErr != nil {
+					fmt.Fprintf(os.Stderr, "ltm: conflict pre-save embed: %v\n", embedErr)
+				}
+			}
+
+			conflictKey, err := s.detectConflict(ctx, scope, key, value, tags, newVec)
+			if err == nil && conflictKey != "" {
+				debugf("ltm: auto-conflict-resolution: new key %q conflicts with old key %q. Running supersede...", key, conflictKey)
+				m, err := s.Supersede(ctx, scope, conflictKey, key, value, tags)
+				if err != nil {
+					return nil, err
+				}
+
+				// If we already generated the vector, persist it to avoid double embed calls
+				if len(newVec) > 0 && s.embed != nil && !s.embed.Disabled() {
+					_ = s.SetEmbedding(ctx, scope, key, newVec, s.embed.Model())
+				}
+
+				return m, nil
+			}
+		}
+	}
+
 	now := time.Now().UnixMilli()
 	origin := ""
 	if opts != nil {
@@ -410,6 +445,122 @@ func (s *Store) SaveWithOptions(ctx context.Context, scope, key, value, tags str
 	// `ltm reembed` or the next save with a working endpoint.
 	s.maybeEmbedAfterSave(ctx, scope, key, value)
 	return s.Get(ctx, scope, key)
+}
+
+// detectConflict scans existing active memories in the scope for semantic or keyword overlap.
+func (s *Store) detectConflict(ctx context.Context, scope, key, value, tags string, newVec []float32) (string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT key, value, tags, embedding 
+		FROM memories 
+		WHERE scope = ? AND key <> ? AND archived = 0
+	`, scope, key)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	var conflictKey string
+	maxSimilarity := 0.0
+
+	const vectorThreshold = 0.85
+	const jaccardThreshold = 0.70
+
+	for rows.Next() {
+		var oldKey, oldValue, oldTags string
+		var blob []byte
+		if err := rows.Scan(&oldKey, &oldValue, &oldTags, &blob); err != nil {
+			continue
+		}
+
+		// Try vector similarity if we have embeddings for both
+		if len(newVec) > 0 && len(blob) > 0 {
+			oldVec, err := decodeEmbedding(blob)
+			if err == nil && len(oldVec) == len(newVec) {
+				sim := cosine(newVec, oldVec)
+				if sim > vectorThreshold && sim > maxSimilarity {
+					maxSimilarity = sim
+					conflictKey = oldKey
+					continue
+				}
+			}
+		}
+
+		// Fallback: Jaccard overlap on tokenized values
+		sim := jaccardSimilarity(value+" "+tags, oldValue+" "+oldTags)
+		if sim > jaccardThreshold && sim > maxSimilarity {
+			maxSimilarity = sim
+			conflictKey = oldKey
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+
+	if conflictKey != "" {
+		return conflictKey, nil
+	}
+
+	return "", nil
+}
+
+// jaccardSimilarity computes Jaccard similarity index based on token overlap.
+func jaccardSimilarity(s1, s2 string) float64 {
+	tokens1 := tokenize(s1)
+	tokens2 := tokenize(s2)
+
+	if len(tokens1) == 0 || len(tokens2) == 0 {
+		return 0
+	}
+
+	intersection := 0
+	for t := range tokens1 {
+		if tokens2[t] {
+			intersection++
+		}
+	}
+
+	union := len(tokens1) + len(tokens2) - intersection
+	if union == 0 {
+		return 0
+	}
+	return float64(intersection) / float64(union)
+}
+
+// tokenize splits a string into lowercase alphanumeric tokens, filtering stop words.
+func tokenize(s string) map[string]bool {
+	tokens := make(map[string]bool)
+	var current []rune
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			current = append(current, unicode.ToLower(r))
+		} else {
+			if len(current) > 0 {
+				tok := string(current)
+				if !isStopWord(tok) {
+					tokens[tok] = true
+				}
+				current = nil
+			}
+		}
+	}
+	if len(current) > 0 {
+		tok := string(current)
+		if !isStopWord(tok) {
+			tokens[tok] = true
+		}
+	}
+	return tokens
+}
+
+// isStopWord returns true if the token is a common noise word.
+func isStopWord(w string) bool {
+	switch w {
+	case "the", "a", "is", "in", "to", "and", "or", "of", "for", "on", "with", "this", "that", "it", "an", "be", "as", "by", "at",
+		"il", "lo", "la", "i", "gli", "le", "di", "da", "con", "su", "per", "tra", "fra", "e", "o", "un", "una", "uno", "che", "del", "al":
+		return true
+	}
+	return false
 }
 
 // maybeEmbedAfterSave is the synchronous embed-on-save hook. No-op when

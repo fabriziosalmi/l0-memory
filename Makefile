@@ -1,7 +1,7 @@
 # l0-memory developer Makefile.
 # Convenience targets only — CI does the canonical builds.
 
-VERSION    ?= 0.8.0
+VERSION    ?= 0.8.1
 LDFLAGS    := -s -w -X main.Version=$(VERSION)
 INSTALL_BIN := $(HOME)/.local/bin/ltm
 

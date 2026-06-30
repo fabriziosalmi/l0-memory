@@ -96,3 +96,11 @@ Print the path to the SQLite database.
 ```sh
 ltm path
 ```
+
+### `serve`
+Start a local HTTP REST API server.
+```sh
+ltm serve [port]
+```
+Starts a lightweight local HTTP server. By default, it runs on port `8080` and binds only to `127.0.0.1` to ensure local-only, airgapped security. Useful for integrating with browser extensions or other local automation tools.
+

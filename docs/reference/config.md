@@ -16,6 +16,7 @@ These variables affect the behavior of the `ltm` binary, whether run as a CLI or
 | `LTM_EMBEDDING_MODEL` | Embedding model name passed to the endpoint. | (empty) |
 | `LTM_EMBED_DISABLE` | Set to `1` to force the vector path off even when a URL is configured. | (empty) |
 | `LTM_EMBED_TIMEOUT` | Per-request embedding timeout as a Go duration (e.g. `3s`). | `5s` |
+| `LTM_CONFLICT_DISABLE` | Set to `1` to disable automatic local conflict resolution (Auto-Supersede) on save. | (empty) |
 
 ::: info Debugging
 Setting `LTM_LOG_FILE` automatically enables `LTM_DEBUG`. This is useful for troubleshooting MCP connection issues where stderr might be swallowed by the host.

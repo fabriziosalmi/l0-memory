@@ -22,8 +22,10 @@ platform.
 ## Repository layout
 
 ```
-server/      Go MCP server + CLI (the `ltm` binary)
-extension/   VSCode extension (TreeView UI + bundled binaries)
+server/             Go MCP server + CLI (the `ltm` binary)
+extension/          VSCode extension (TreeView UI + bundled binaries)
+extension-browser/  Web Clipper browser extension (Manifest V3)
+integrations/       Host and shell integrations (Claude Code, Git hooks)
 ```
 
 ## Install
@@ -258,6 +260,7 @@ ltm traverse <key> [depth]                 # JSON: {root, depth, nodes, edges}
 ltm reembed [--force]                      # backfill embeddings for hybrid retrieval
 ltm path                                   # prints the SQLite DB path
 ltm version
+ltm serve [port]                           # starts local HTTP REST server (default 8080)
 ```
 
 ## VSCode extension
@@ -314,6 +317,34 @@ When `l0-memory.binaryPath` is empty, the extension searches in this order:
 If none of the above resolves to an executable, the sidebar surfaces an
 error with two actions: open the `binaryPath` setting, or open the
 output channel.
+## REST API & Browser Web Clipper (Offline)
+
+For offline, browser-native memory capture, you can run the `ltm` binary as a local REST API server:
+
+```sh
+ltm serve [port] # starts the server on http://127.0.0.1:8080 by default
+```
+
+This starts a local HTTP server bound strictly to `127.0.0.1` for local-only, airgapped security. A companion Manifest V3 browser extension is provided in `extension-browser/`. It allows you to:
+1. Save notes and tags manually via a dark-mode popup interface.
+2. Select text on any web page, right-click, and select **"Save selection to l0-memory"** to clip text snippets instantly in the background.
+
+To load the extension, go to your browser's extensions page, enable **Developer mode**, and select **Load unpacked**, pointing to the `extension-browser/` directory.
+
+## Local Conflict Resolution (Auto-Supersede)
+
+`l0-memory` includes automatic local conflict resolution on write:
+* When saving a new memory, the Go server automatically checks for existing active memories in the same scope with highly similar content.
+* It uses **Jaccard similarity** (token overlap) for pure offline setups, and **Cosine similarity** for vector-enabled setups.
+* If a conflict is detected (above 70% keyword overlap or 85% vector similarity), the old memory is automatically archived and linked as `--supersedes-->` to the new one (equivalent to running `ltm supersede`).
+* This behavior is enabled by default. To disable it, set `LTM_CONFLICT_DISABLE=1` in your environment.
+
+## Git Hook Integration
+
+Keep your AI assistant updated with your repository's recent commit history automatically and offline.
+1. Run `integrations/git/install-hooks.sh` inside your repository.
+2. This installs a `post-commit` script under `.git/hooks/`.
+3. On every git commit, the hook automatically extracts the commit SHA, message, and saves it into the `repo:<name>` scope.
 
 ## Diagnostics
 
