@@ -35,4 +35,6 @@ docs/.vitepress/cache
 
 # Local ideas (not tracked)
 /idee.md
+/*.pdf
+
 
