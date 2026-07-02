@@ -35,8 +35,13 @@ Persist a concise, durable snapshot of the current work so the next session — 
 
 5. **Pin the durable one.** If this entry is the "always recall on open" state for the project (or a persona fact), pin it via the l0-memory `memory_pin` tool — the SessionStart recall hook surfaces pinned entries first. Don't pin transient working notes.
 
+6. **Set the freshness signal (curation includes expiry, not just content).** The recall hook now tags every injected line with its verified/updated date and age, so a durable-but-stale fact reads *as* stale instead of entering with silent authority. Close that loop on write:
+   - When you reaffirm an **existing** entry that is still true, call the l0-memory `memory_verify` tool so its `verified_at` reflects *now* — otherwise a fact last touched months ago keeps showing an old age even though you just confirmed it.
+   - For a fact with a natural shelf life (a status that will go stale, a decision to revisit), add a `review-by-<YYYY-MM>` tag so the next curation pass can find it.
+
 ## Hard rules
 
 - **Never persist secrets.** No API tokens, passwords, `.env` values, private keys, or full credentials. If state references a secret, describe it by name/location only (e.g. "token in .env"), never the value.
 - **One snapshot, not a log.** Update the existing key; don't append a new dated entry every time unless the user explicitly wants a history trail.
+- **Correct stale facts at the source; don't let a crisp-but-wrong entry survive.** A durable store makes a wrong fact *durably* wrong — it re-injects with user-level authority every session until fixed. If something you recalled is now false, `memory_save` the correction over the same key, or use `memory_supersede` to retire it. Do not just add a new entry and leave the old one to keep surfacing.
 - Keep snapshots factual and minimal.

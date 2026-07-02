@@ -9,6 +9,22 @@ All notable changes to this project are documented here. The format is based on
 Claude Code recall-hook hardening. Integration-only — the `ltm` binary and store
 are unchanged.
 
+### Added
+- Recall lines now carry a **freshness marker** — `· verified 2026-06-24, 7d` or
+  `· updated 2026-05-07, 55d` (prefers `verified_at`, falls back to `updated_at`).
+  A durable-but-stale fact now reads *as* stale instead of entering with silent
+  authority every session. The injection preamble tells the model to trust old
+  entries less.
+- `/checkpoint` now curates freshness, not just content: reaffirm a still-true
+  entry with `memory_verify` (so its age reflects now), tag shelf-life facts
+  `review-by-<YYYY-MM>`, and correct/`memory_supersede` stale facts at the source
+  rather than leaving a crisp-but-wrong entry to keep surfacing.
+- **Observability:** each run appends one structured line to
+  `<config>/logs/l0-recall.log` with the branch taken
+  (`no-binary` / `no-memory` / `error` / `injected` with count + resolved binary),
+  so a fresh-machine deploy can be verified by tailing the log instead of
+  `claude --debug`.
+
 ### Fixed
 - `l0-recall.py` now resolves the `ltm` binary from the checked-out repo's own
   build (`<git-root>/server/ltm`) as a last fallback, after `LTM_BIN`, `PATH`,
