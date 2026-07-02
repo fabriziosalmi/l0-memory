@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Claude Code recall-hook hardening. Integration-only — the `ltm` binary and store
+are unchanged.
+
+### Fixed
+- `l0-recall.py` now resolves the `ltm` binary from the checked-out repo's own
+  build (`<git-root>/server/ltm`) as a last fallback, after `LTM_BIN`, `PATH`,
+  and `~/.local/bin/ltm`. On a fresh machine where `ltm` is not yet on `PATH`
+  the `SessionStart` recall no longer silently injects nothing.
+
+### Changed
+- `SessionStart` matcher is now `startup|clear|compact` (was `startup|resume|clear`).
+  Dropped `resume` (the persona is still in the restored transcript, so
+  re-injecting only burns tokens) and added `compact` (compaction drops the
+  previously-injected context, so it must be re-injected mid-session).
+
 ## [0.8.1] - 2026-06-30
 
 Offline and airgapped features: local REST API server daemon, Manifest V3 Web Clipper

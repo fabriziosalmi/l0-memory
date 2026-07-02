@@ -22,7 +22,8 @@ Design:
   - Fail-safe: any error emits nothing and exits 0 — it never blocks a session.
 
 Configuration (env, all optional):
-  LTM_BIN        path to the ltm binary (default: search PATH, then ~/.local/bin/ltm)
+  LTM_BIN        path to the ltm binary (default: search PATH, then
+                 ~/.local/bin/ltm, then <git-root>/server/ltm)
   L0_RECALL_MAXVALUE   chars per entry (default 600)
   L0_RECALL_MAXREPO    max project entries (default 6)
 """
@@ -33,7 +34,11 @@ import subprocess
 import sys
 
 
-def _ltm_bin():
+def _ltm_bin(repo_root=None):
+    """Resolve the ltm binary: LTM_BIN, then PATH, then ~/.local/bin, then
+    — last — the checked-out repo's own build (server/ltm). The repo-local
+    fallback needs the git root, so this is called from main() with cwd known,
+    not at import time."""
     env = os.environ.get("LTM_BIN")
     if env and os.path.exists(env):
         return env
@@ -41,19 +46,24 @@ def _ltm_bin():
     if found:
         return found
     fallback = os.path.expanduser("~/.local/bin/ltm")
-    return fallback if os.path.exists(fallback) else None
+    if os.path.exists(fallback):
+        return fallback
+    if repo_root:
+        local = os.path.join(repo_root, "server", "ltm")
+        if os.path.exists(local):
+            return local
+    return None
 
 
-LTM = _ltm_bin()
 MAX_VALUE = int(os.environ.get("L0_RECALL_MAXVALUE", "600"))
 MAX_REPO = int(os.environ.get("L0_RECALL_MAXREPO", "6"))
 
 
-def ltm(scope, sub, n=None):
+def ltm(bin_path, scope, sub, n=None):
     """Run `ltm --scope <scope> <sub> [n]`; return the parsed list (or [])."""
-    if not LTM:
+    if not bin_path:
         return []
-    args = [LTM, "--scope", scope, sub]
+    args = [bin_path, "--scope", scope, sub]
     if n is not None:
         args.append(str(n))
     try:
@@ -84,27 +94,30 @@ def main():
         payload = {}
     cwd = payload.get("cwd") or os.getcwd()
 
-    slug = None
+    toplevel = None
     try:
         r = subprocess.run(
             ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, timeout=3,
         )
         if r.returncode == 0 and r.stdout.strip():
-            slug = os.path.basename(r.stdout.strip()).lower()
+            toplevel = r.stdout.strip()
     except Exception:
         pass
+    slug = os.path.basename(toplevel).lower() if toplevel else None
+
+    bin_path = _ltm_bin(toplevel)
 
     blocks = []
 
-    persona = ltm("user", "pinned")
+    persona = ltm(bin_path, "user", "pinned")
     if persona:
         blocks.append("PERSONA (l0-memory, scope=user, pinned):")
         blocks += fmt(persona)
 
     if slug:
-        pinned = ltm(f"repo:{slug}", "pinned")
-        recent = ltm(f"repo:{slug}", "list", MAX_REPO)
+        pinned = ltm(bin_path, f"repo:{slug}", "pinned")
+        recent = ltm(bin_path, f"repo:{slug}", "list", MAX_REPO)
         seen = {(m.get("scope"), m.get("key")) for m in pinned}
         fill = [m for m in recent if (m.get("scope"), m.get("key")) not in seen]
         merged = (pinned + fill)[:MAX_REPO]

@@ -54,7 +54,13 @@ except Exception:
     d = {}
 ss = d.setdefault("hooks", {}).setdefault("SessionStart", [])
 ss.append({
-    "matcher": "startup|resume|clear",
+    # Re-inject whenever the injected context is GONE, and only then:
+    #   startup  — new session, nothing loaded yet
+    #   clear    — transcript wiped
+    #   compact  — compaction drops previously-injected context; must re-inject
+    # Deliberately NOT `resume`: there the persona is still in the restored
+    # transcript, so re-injecting just burns tokens and adds noise.
+    "matcher": "startup|clear|compact",
     "hooks": [{"type": "command", "command": hook}],
 })
 if os.path.exists(settings):
