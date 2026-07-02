@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.8.2] - 2026-07-02
 
 Claude Code recall-hook hardening. Integration-only — the `ltm` binary and store
 are unchanged.
@@ -24,6 +24,12 @@ are unchanged.
   (`no-binary` / `no-memory` / `error` / `injected` with count + resolved binary),
   so a fresh-machine deploy can be verified by tailing the log instead of
   `claude --debug`.
+- **`/checkpoint` write-path gate (agent proposes, human disposes):** before any
+  `memory_save`/`memory_supersede`, the skill now shows a compact diff of exactly
+  what it will write (scope, key, create-vs-overwrite, full value, tags) and waits
+  for confirmation — no silent writes. Auto-injected recall enters with user-level
+  authority, so the write is the moment that authority is earned. No schema or
+  runtime change; skill instructions only.
 
 ### Fixed
 - `l0-recall.py` now resolves the `ltm` binary from the checked-out repo's own

@@ -7,7 +7,7 @@ re-explaining who you are or where the project left off:
 | Piece | What it does | Trigger |
 |-------|--------------|---------|
 | `l0-recall.py` | SessionStart hook. Injects your **persona** (pinned `user`-scope entries) + the current **project** memory (`repo:<slug>`, pinned first) as context. | Automatic, every session |
-| `skills/checkpoint/SKILL.md` | `/checkpoint` skill. Synthesizes a durable state snapshot and saves it to the right scope, pinning the durable one. | You run `/checkpoint` |
+| `skills/checkpoint/SKILL.md` | `/checkpoint` skill. Synthesizes a durable state snapshot and saves it to the right scope, pinning the durable one. Shows a diff and asks confirmation before every write — agent proposes, you dispose. | You run `/checkpoint` |
 
 This builds on the MCP server you install with `make install-mcp`; the recall
 hook reads the same store directly through the `ltm` CLI, so it is fast and
@@ -34,7 +34,7 @@ target with `CLAUDE_CONFIG_DIR`. Open a **new** Claude Code session to pick it u
 
 1. Open a repo → the hook injects "who you are" + "this project's state".
 2. Work.
-3. `/checkpoint` at the end → it saves the updated state, pinning the durable entry.
+3. `/checkpoint` at the end → it shows a diff of what it will write, you confirm, then it saves the updated state and pins the durable entry.
 4. Next session (even from another MCP host) → step 1 again, context already loaded.
 
 ## Pinning is the relevance lever
