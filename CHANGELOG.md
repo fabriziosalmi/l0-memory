@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-07-03
+
+Adoption/DX hardening (Tier 0) — the web clipper path you can actually follow,
+and a way to see what's wired up. Runtime change in `ltm serve`.
+
+### Added
+- **`ltm doctor`** — one-shot health check of the whole setup: binary + version,
+  store path + memory count, embeddings config/reachability, local REST server
+  liveness + token, and the Claude Code recall hook. Prints a ✓/✗/⚠ checklist so
+  a fresh-machine install (or a "why isn't the clipper working" moment) is
+  diagnosable in one command.
+- **`extension-browser/README.md`** — the browser web clipper finally has setup
+  docs: prerequisites, `ltm serve`, load-unpacked, token, security model, and a
+  troubleshooting table.
+
+### Changed / Security
+- **`ltm serve` now requires a bearer token** (BREAKING for existing REST API
+  users). Every route except `GET /health` must present `X-LTM-Token` (or
+  `Authorization: Bearer`). Rationale: binding to `127.0.0.1` does **not** stop a
+  malicious web page from calling the server from its own JavaScript — with the
+  old `Access-Control-Allow-Origin: *` any site you visited could read/write your
+  entire memory store. The token is generated once, stored `0600` at
+  `<db-dir>/serve-token` (override via `LTM_SERVE_TOKEN`), and printed on startup.
+- **CORS locked down** — `Access-Control-Allow-Origin` is now returned only for
+  `chrome-extension://` / `moz-extension://` origins, not `*`. Defense-in-depth
+  behind the token.
+- **Web Clipper extension (v0.2.0):** sends the token (`X-LTM-Token`), stores it +
+  the last scope in `chrome.storage.local` (new `storage` permission), defaults
+  clips to scope **`web`** instead of `user` (so clips no longer pollute the
+  persona scope the recall hook injects everywhere), and fails **loud and
+  actionable** — "is `ltm serve` running?" on a network error, "invalid token" on
+  401, and a toolbar badge (✓/!) for context-menu quick-saves.
+
 ## [0.8.2] - 2026-07-02
 
 Claude Code recall-hook hardening. Integration-only — the `ltm` binary and store

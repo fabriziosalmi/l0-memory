@@ -22,7 +22,7 @@ func extractScope(args []string) (string, []string) {
 
 func runCLI(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: ltm [--scope <name>] <list|pinned|get|search|query|save|delete|rename|verify|supersede|pin|unpin|link|unlink|links|traverse|reembed|path|version|serve> [args...]")
+		return fmt.Errorf("usage: ltm [--scope <name>] <list|pinned|get|search|query|save|delete|rename|verify|supersede|pin|unpin|link|unlink|links|traverse|reembed|path|version|serve|doctor> [args...]")
 	}
 
 	scope, args := extractScope(args)
@@ -278,6 +278,8 @@ func runCLI(args []string) error {
 			}
 		}
 		return StartRESTServer(store, port)
+	case "doctor":
+		return runDoctor(ctx, store)
 	default:
 		return fmt.Errorf("unknown command: %s", cmd)
 	}

@@ -36,6 +36,71 @@ func TestRESTHealth(t *testing.T) {
 	}
 }
 
+func TestRequireToken(t *testing.T) {
+	const token = "secret-token"
+	handler := requireToken(token, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	cases := []struct {
+		name    string
+		method  string
+		path    string
+		headers map[string]string
+		want    int
+	}{
+		{"no token rejected", "GET", "/memories", nil, http.StatusUnauthorized},
+		{"wrong token rejected", "GET", "/memories", map[string]string{"X-LTM-Token": "nope"}, http.StatusUnauthorized},
+		{"correct X-LTM-Token accepted", "GET", "/memories", map[string]string{"X-LTM-Token": token}, http.StatusOK},
+		{"correct Bearer accepted", "GET", "/memories", map[string]string{"Authorization": "Bearer " + token}, http.StatusOK},
+		{"health exempt", "GET", "/health", nil, http.StatusOK},
+		{"preflight exempt", "OPTIONS", "/memories", nil, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Errorf("got %d, want %d (body: %s)", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestCORSOriginLockdown(t *testing.T) {
+	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	cases := []struct {
+		name     string
+		origin   string
+		wantACAO string // expected Access-Control-Allow-Origin ("" = header absent)
+	}{
+		{"extension origin reflected", "chrome-extension://abcdef", "chrome-extension://abcdef"},
+		{"firefox extension reflected", "moz-extension://abcdef", "moz-extension://abcdef"},
+		{"web origin blocked", "https://evil.com", ""},
+		{"no origin (curl)", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/memories", nil)
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != tc.wantACAO {
+				t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, tc.wantACAO)
+			}
+		})
+	}
+}
+
 func TestRESTSaveAndGetAndDelete(t *testing.T) {
 	store := newStore(t)
 	mux := newTestMux(store)

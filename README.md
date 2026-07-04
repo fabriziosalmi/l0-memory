@@ -260,8 +260,16 @@ ltm traverse <key> [depth]                 # JSON: {root, depth, nodes, edges}
 ltm reembed [--force]                      # backfill embeddings for hybrid retrieval
 ltm path                                   # prints the SQLite DB path
 ltm version
-ltm serve [port]                           # starts local HTTP REST server (default 8080)
+ltm serve [port]                           # local HTTP REST server (default 8080); prints an auth token
+ltm doctor                                 # one-shot health check: binary, store, serve, hook
 ```
+
+`ltm serve` powers the [browser web clipper](extension-browser/). It binds to
+`127.0.0.1` and requires a bearer token (`X-LTM-Token`) on every request except
+`GET /health` — 127.0.0.1 alone does not stop a malicious web page from calling
+it. The token is generated once and stored `0600` at `<db-dir>/serve-token`
+(override with `LTM_SERVE_TOKEN`); CORS is restricted to browser-extension
+origins. See [extension-browser/README.md](extension-browser/README.md).
 
 ## VSCode extension
 

@@ -1,16 +1,25 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // StartRESTServer runs a lightweight local HTTP server for l0-memory.
-// It listens on 127.0.0.1 to ensure it remains strictly local and airgapped.
+// It listens on 127.0.0.1 to ensure it remains strictly local and airgapped,
+// and gates every route (except GET /health) behind a bearer token — because
+// 127.0.0.1 binding alone does not stop a malicious web page from calling it.
 func StartRESTServer(store *Store, port int) error {
+	token, source, err := loadServeToken()
+	if err != nil {
+		return fmt.Errorf("failed to load serve token: %w", err)
+	}
+
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -26,20 +35,57 @@ func StartRESTServer(store *Store, port int) error {
 	mux.HandleFunc("POST /memories", handleSaveMemory(store))
 	mux.HandleFunc("DELETE /memories/{key}", handleDeleteMemory(store))
 
-	// CORS wrapper middleware
-	handler := corsMiddleware(mux)
+	// Token gate innermost, CORS outermost so even 401s carry CORS headers
+	// (the browser extension needs to read the error body).
+	handler := corsMiddleware(requireToken(token, mux))
 
-	debugf("REST server listening on http://%s", addr)
+	debugf("REST server listening on http://%s (token source: %s)", addr, source)
 	fmt.Printf("REST server listening on http://%s\n", addr)
+	fmt.Printf("Auth token: %s\n", token)
+	fmt.Printf("  (source: %s — paste it into the Web Clipper extension)\n", source)
 	return http.Serve(listener, handler)
 }
 
+// requireToken rejects any request that does not present the serve token via
+// `X-LTM-Token: <token>` or `Authorization: Bearer <token>`. GET /health and
+// CORS preflight (OPTIONS) are exempt so liveness checks and the browser
+// preflight still work without credentials.
+func requireToken(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions || r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		provided := r.Header.Get("X-LTM-Token")
+		if provided == "" {
+			if a := r.Header.Get("Authorization"); strings.HasPrefix(a, "Bearer ") {
+				provided = strings.TrimSpace(strings.TrimPrefix(a, "Bearer "))
+			}
+		}
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"missing or invalid token — set X-LTM-Token (see the token printed by ` + "`ltm serve`" + `)"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// corsMiddleware reflects the request Origin only for browser-extension schemes
+// (chrome-extension:// / moz-extension://). Arbitrary web pages get no
+// Access-Control-Allow-Origin, so even with the token the browser blocks them
+// from reading responses — defense-in-depth behind requireToken. Non-browser
+// clients (curl, the CLI) send no Origin and are unaffected.
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Allow local origins (e.g. browser extensions, localhost apps)
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if strings.HasPrefix(origin, "chrome-extension://") || strings.HasPrefix(origin, "moz-extension://") {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-LTM-Scope")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-LTM-Scope, X-LTM-Token, Authorization")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "l0-memory Web Clipper",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Offline web clipper for l0-memory. Save text highlights and notes to your local memory store.",
   "permissions": [
     "contextMenus",
     "activeTab",
-    "scripting"
+    "scripting",
+    "storage"
   ],
   "host_permissions": [
     "http://127.0.0.1:8080/*"
