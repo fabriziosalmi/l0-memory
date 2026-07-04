@@ -46,9 +46,14 @@ The macOS binaries in the release archives are ad-hoc codesigned. See
 
 ```sh
 make build           # server/ltm
+make install         # build + install ltm to ~/.local/bin
 make test            # go vet + go test -race
 make vsix            # cross-compile all binaries + package the extension
 ```
+
+`make install` places `ltm` at `~/.local/bin/ltm`; make sure that directory is on
+your `PATH` (e.g. add `export PATH="$HOME/.local/bin:$PATH"` to your shell rc),
+otherwise `ltm` won't be found in a fresh shell.
 
 The default DB path is `~/.long-term-memory/memories.db`. Override with
 `LTM_DB=/path/to.db`.
@@ -264,13 +269,6 @@ ltm serve [port]                           # local HTTP REST server (default 808
 ltm doctor                                 # one-shot health check: binary, store, serve, hook
 ```
 
-`ltm serve` powers the [browser web clipper](extension-browser/). It binds to
-`127.0.0.1` and requires a bearer token (`X-LTM-Token`) on every request except
-`GET /health` — 127.0.0.1 alone does not stop a malicious web page from calling
-it. The token is generated once and stored `0600` at `<db-dir>/serve-token`
-(override with `LTM_SERVE_TOKEN`); CORS is restricted to browser-extension
-origins. See [extension-browser/README.md](extension-browser/README.md).
-
 ## VSCode extension
 
 The sidebar has two panes:
@@ -325,19 +323,26 @@ When `l0-memory.binaryPath` is empty, the extension searches in this order:
 If none of the above resolves to an executable, the sidebar surfaces an
 error with two actions: open the `binaryPath` setting, or open the
 output channel.
-## REST API & Browser Web Clipper (Offline)
 
-For offline, browser-native memory capture, you can run the `ltm` binary as a local REST API server:
+## REST API & web clipper
 
-```sh
-ltm serve [port] # starts the server on http://127.0.0.1:8080 by default
-```
+`ltm serve` exposes the store over a local HTTP/JSON API on `127.0.0.1:8080`
+(`GET /health`, `GET`/`POST`/`DELETE /memories`) — the backend for the browser
+web clipper in `extension-browser/`, and usable by any local script.
 
-This starts a local HTTP server bound strictly to `127.0.0.1` for local-only, airgapped security. A companion Manifest V3 browser extension is provided in `extension-browser/`. It allows you to:
-1. Save notes and tags manually via a dark-mode popup interface.
-2. Select text on any web page, right-click, and select **"Save selection to l0-memory"** to clip text snippets instantly in the background.
+Every route except `GET /health` requires a bearer token (`X-LTM-Token` or
+`Authorization: Bearer`). Binding to `127.0.0.1` does **not** stop a malicious
+web page from calling the server, so the token is what actually gates it — the
+old `Access-Control-Allow-Origin: *` let any site read/write the whole store.
+The token is generated once, stored `0600` at `<db-dir>/serve-token` (override
+with `LTM_SERVE_TOKEN`), and printed on startup; CORS is returned only for
+`chrome-extension://` / `moz-extension://` origins.
 
-To load the extension, go to your browser's extensions page, enable **Developer mode**, and select **Load unpacked**, pointing to the `extension-browser/` directory.
+Quick start: run `ltm serve`, load `extension-browser/` as an unpacked extension
+(`chrome://extensions` → Developer mode → Load unpacked), and paste the printed
+token into the popup. Clips default to scope `web`. Full walkthrough and
+troubleshooting in [extension-browser/README.md](extension-browser/README.md);
+run `ltm doctor` to check the whole setup at a glance.
 
 ## Local Conflict Resolution (Auto-Supersede)
 
@@ -356,7 +361,12 @@ Keep your AI assistant updated with your repository's recent commit history auto
 
 ## Diagnostics
 
-`ltm` honours two diagnostic environment variables:
+`ltm doctor` prints a one-shot health check — binary version, store path + entry
+count, embeddings config/reachability, REST server liveness + token, and the
+Claude Code recall hook — as a ✓/✗/⚠ checklist. Reach for it first when
+something isn't wired up.
+
+`ltm` also honours two diagnostic environment variables:
 
 - `LTM_DEBUG=1` — timestamped lines on stderr (boot, OpenStore success,
   every JSON-RPC line read, EOF, scanner errors).

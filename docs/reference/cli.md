@@ -98,9 +98,16 @@ ltm path
 ```
 
 ### `serve`
-Start a local HTTP REST API server.
+Start a local HTTP REST API server — the backend for the [web clipper](/guide/features-web-clipper).
 ```sh
 ltm serve [port]
 ```
-Starts a lightweight local HTTP server. By default, it runs on port `8080` and binds only to `127.0.0.1` to ensure local-only, airgapped security. Useful for integrating with browser extensions or other local automation tools.
+Runs on port `8080` by default, bound only to `127.0.0.1`. Every route except `GET /health` requires a bearer token (`X-LTM-Token` or `Authorization: Bearer`) — 127.0.0.1 binding alone does not stop a malicious web page from calling the server. The token is generated once, stored `0600` at `<db-dir>/serve-token` (override with `LTM_SERVE_TOKEN`), and printed on startup; CORS is returned only for browser-extension origins.
+
+### `doctor`
+Print a one-shot health check of the whole setup.
+```sh
+ltm doctor
+```
+Reports, as a ✓/✗/⚠ checklist: binary version, store path + memory count, embeddings config/reachability, REST server liveness + token, and the Claude Code recall hook. Reach for it first when something isn't wired up.
 
