@@ -6,6 +6,18 @@ export default defineConfig({
   description: "Long-term memory for AI assistants",
   base: '/l0-memory/',
   head: [
+    // Tutto first-party. 'unsafe-inline' serve perche' VitePress emette
+    // uno script inline per il tema e stili inline.
+    [
+      'meta',
+      {
+        'http-equiv': 'Content-Security-Policy',
+        content:
+          "default-src 'self'; script-src 'self' 'unsafe-inline'; " +
+          "style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+          "font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self'",
+      },
+    ],
     ['link', { rel: 'icon', href: '/l0-memory/favicon.svg' }],
     ['meta', { name: 'theme-color', content: '#000000' }],
     ['meta', { name: 'apple-mobile-web-app-capable', content: 'yes' }],
@@ -69,7 +81,7 @@ export default defineConfig({
     ],
 
     footer: {
-      message: 'Crafted with precision for AI assistants.',
+      message: 'Crafted with precision for AI assistants.' + ' · <a href="https://fabriziosalmi.github.io/privacy">Privacy &amp; legal</a>',
       copyright: 'Copyright © 2024-present Fabrizio Salmi'
     },
 
