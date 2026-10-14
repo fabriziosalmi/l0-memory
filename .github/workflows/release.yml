@@ -8,19 +8,33 @@ permissions:
   contents: write
 
 jobs:
+  check-version:
+    name: tag matches package.json
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          want="${GITHUB_REF_NAME#v}"
+          have="$(node -p "require('./extension/package.json').version")"
+          if [ "$want" != "$have" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match extension/package.json version $have"
+            exit 1
+          fi
+
   build-binaries:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    needs: check-version
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: linux-amd64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             goos: linux
             goarch: amd64
           - target: linux-arm64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             goos: linux
             goarch: arm64
           # Darwin builds run on macos-latest so we can ad-hoc codesign the
@@ -36,7 +50,7 @@ jobs:
             goos: darwin
             goarch: arm64
           - target: windows-amd64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             goos: windows
             goarch: amd64
             ext: .exe
@@ -113,7 +127,7 @@ jobs:
 
   release:
     name: github release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [build-binaries, build-extension]
     steps:
       - uses: actions/download-artifact@v8

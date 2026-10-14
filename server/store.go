@@ -349,11 +349,11 @@ func migrateTo02(db *sql.DB) error {
 
 // backfillFTS keeps memories_fts in sync with the source table. Two failure
 // modes can leave them out of sync:
-//   1. memories has rows the FTS index doesn't know about (a pre-FTS DB
-//      that was migrated, or rows inserted while triggers were absent).
-//   2. memories_fts has rowids that no longer exist in memories (this should
-//      not happen under normal trigger flow, but a corrupt DB can produce
-//      this and a naive COUNT-based check would miss case 1 forever).
+//  1. memories has rows the FTS index doesn't know about (a pre-FTS DB
+//     that was migrated, or rows inserted while triggers were absent).
+//  2. memories_fts has rowids that no longer exist in memories (this should
+//     not happen under normal trigger flow, but a corrupt DB can produce
+//     this and a naive COUNT-based check would miss case 1 forever).
 //
 // We address both: insert what's missing in FTS, then delete FTS rows whose
 // rowid has no match in memories.
@@ -921,6 +921,7 @@ func isAlphaNum(s string) bool {
 //   - Client is Disabled (LTM_EMBED_DISABLE=1 or empty URL).
 //   - Query embedding errors (endpoint down, timeout, decode failure).
 //   - VectorSearch errors (DB-level).
+//
 // Each is logged once to stderr; the search itself never errors out.
 func (s *Store) Search(ctx context.Context, scope, query string, limit int) ([]SearchHit, error) {
 	if limit <= 0 {

@@ -1,7 +1,8 @@
 # l0-memory developer Makefile.
 # Convenience targets only — CI does the canonical builds.
 
-VERSION    ?= 0.9.1
+# Single source of truth: the extension's package.json.
+VERSION    ?= $(shell sed -n 's/^  "version": *"\([^"]*\)".*/\1/p' extension/package.json)
 LDFLAGS    := -s -w -X main.Version=$(VERSION)
 INSTALL_BIN := $(HOME)/.local/bin/ltm
 
@@ -38,7 +39,7 @@ test:
 	cd server && go vet ./... && go test -count=1 -race -timeout 90s ./...
 
 extension-bins:
-	cd extension && ./scripts/build-bins.sh
+	cd extension && VERSION=$(VERSION) ./scripts/build-bins.sh
 
 extension-compile:
 	cd extension && npm ci && npm run compile

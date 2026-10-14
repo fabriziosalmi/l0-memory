@@ -1030,7 +1030,7 @@ func TestConflictResolutionAutoSupersede(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to list links: %v", err)
 	}
-	
+
 	foundLink := false
 	for _, l := range links {
 		if l.ToKey == "original-key" && l.Rel == "supersedes" {
