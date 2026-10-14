@@ -7,6 +7,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -1055,5 +1056,33 @@ func TestConflictResolutionAutoSupersede(t *testing.T) {
 	}
 	if m2After.Archived {
 		t.Errorf("expected similar-key to NOT be archived when conflict resolution is disabled")
+	}
+}
+
+// Several `ltm` processes (VSCode extension, MCP host, hooks) open the same
+// fresh DB at once on first install. None of them may fail with
+// "database is locked".
+func TestOpenStoreConcurrentFreshDB(t *testing.T) {
+	for round := 0; round < 10; round++ {
+		path := filepath.Join(t.TempDir(), "m.db")
+		var wg sync.WaitGroup
+		errs := make(chan error, 8)
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				s, err := openStoreAt(path)
+				if err != nil {
+					errs <- err
+					return
+				}
+				_ = s.Close()
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Fatalf("round %d: concurrent open: %v", round, err)
+		}
 	}
 }
