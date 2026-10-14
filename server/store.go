@@ -11,7 +11,8 @@ import (
 	"time"
 	"unicode"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // DefaultScope is used by save/get/delete when the caller doesn't specify
@@ -106,8 +107,35 @@ func OpenStore() (*Store, error) {
 	return s, nil
 }
 
+// openStoreAt opens and initialises the store, retrying while another
+// process holds the lock. busy_timeout covers most contention, but on a
+// brand-new file SQLite can return SQLITE_BUSY without waiting (a
+// connection still in rollback mode needs to write while another one is
+// switching the file to WAL), so the whole bootstrap is retried.
 func openStoreAt(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	deadline := time.Now().Add(10 * time.Second)
+	for backoff := 20 * time.Millisecond; ; backoff = min(backoff*2, 500*time.Millisecond) {
+		s, err := initStoreAt(path)
+		if err == nil || !isBusy(err) || time.Now().After(deadline) {
+			return s, err
+		}
+		time.Sleep(backoff)
+	}
+}
+
+func isBusy(err error) bool {
+	var se *sqlite.Error
+	return errors.As(err, &se) && se.Code()&0xff == sqlite3.SQLITE_BUSY
+}
+
+func initStoreAt(path string) (*Store, error) {
+	// Pragmas run in order: busy_timeout must come first so the WAL switch
+	// waits for other `ltm` processes opening the same file (VSCode, MCP
+	// host and hooks all start together) instead of failing with
+	// SQLITE_BUSY. _txlock=immediate takes the write lock at BEGIN: a
+	// deferred read→write upgrade under WAL fails without consulting the
+	// busy handler.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_txlock=immediate")
 	if err != nil {
 		return nil, err
 	}

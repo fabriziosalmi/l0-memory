@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.1] - 2026-10-14
+
+Fix for fresh installs. Store-only change, no schema migration.
+
+### Fixed
+- **`database is locked` on first run.** Several `ltm` processes (the VSCode
+  extension, the MCP host, the Claude Code hooks) open the same store at the same
+  time, and on a new file most of them could fail with `SQLITE_BUSY`. Three
+  causes:
+  - `busy_timeout` was set *after* `journal_mode(WAL)`, so the WAL switch ran
+    with no busy wait. The pragma order is now reversed.
+  - Transactions were `DEFERRED`; under WAL a read→write upgrade returns
+    `SQLITE_BUSY` without calling the busy handler. They now start
+    `IMMEDIATE` (`_txlock=immediate`).
+  - On a brand-new file SQLite can return `SQLITE_BUSY` without waiting while
+    another connection switches it to WAL. Store bootstrap is now retried with
+    backoff (up to 10s).
+
+  With 8 concurrent processes it went from failing in 12 of 15 runs to 0 of 40.
+  Covered by `TestOpenStoreConcurrentFreshDB`.
+
 ## [0.9.0] - 2026-07-03
 
 Adoption/DX hardening (Tier 0) — the web clipper path you can actually follow,

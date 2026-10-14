@@ -62,6 +62,8 @@ The default DB path is `~/.long-term-memory/memories.db`. Override with
 
 `ltm` is a stdio MCP process. Every host that speaks MCP can use the same
 SQLite store, so a memory saved from one tool is visible from another.
+The store runs in WAL mode with a busy timeout, so several `ltm` processes
+(MCP hosts, the VSCode extension, hooks, the CLI) can open it at the same time.
 
 ### Claude Code
 
