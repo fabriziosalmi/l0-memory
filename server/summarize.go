@@ -75,9 +75,9 @@ func summarizeJSON(raw string) any {
 		}
 		sort.Strings(keys)
 		return map[string]any{
-			"type":     "object",
+			"type":      "object",
 			"key_count": len(keys),
-			"keys":     keys,
+			"keys":      keys,
 		}
 	case []any:
 		return map[string]any{

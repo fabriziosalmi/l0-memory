@@ -554,12 +554,12 @@ func TestCosineBasics(t *testing.T) {
 		a, b []float32
 		want float64
 	}{
-		{[]float32{1, 0}, []float32{1, 0}, 1.0},        // identical
-		{[]float32{1, 0}, []float32{-1, 0}, -1.0},      // antiparallel
-		{[]float32{1, 0}, []float32{0, 1}, 0.0},        // orthogonal
-		{[]float32{}, []float32{1, 2}, 0.0},            // empty
-		{[]float32{0, 0}, []float32{1, 2}, 0.0},        // zero norm
-		{[]float32{1, 2, 3}, []float32{1, 2}, 0.0},     // dim mismatch
+		{[]float32{1, 0}, []float32{1, 0}, 1.0},    // identical
+		{[]float32{1, 0}, []float32{-1, 0}, -1.0},  // antiparallel
+		{[]float32{1, 0}, []float32{0, 1}, 0.0},    // orthogonal
+		{[]float32{}, []float32{1, 2}, 0.0},        // empty
+		{[]float32{0, 0}, []float32{1, 2}, 0.0},    // zero norm
+		{[]float32{1, 2, 3}, []float32{1, 2}, 0.0}, // dim mismatch
 	}
 	for _, c := range cases {
 		got := cosine(c.a, c.b)

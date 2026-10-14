@@ -11,8 +11,9 @@ import (
 // memory URIs use an empty authority and put scope and key as path segments.
 // Each segment is URL-encoded so colons and slashes inside scope or key are
 // preserved unambiguously. Examples:
-//   memory:///user/focus_areas
-//   memory:///repo%3Al0-memory/notes
+//
+//	memory:///user/focus_areas
+//	memory:///repo%3Al0-memory/notes
 const memoryURIPrefix = "memory:///"
 
 func makeMemoryURI(scope, key string) string {

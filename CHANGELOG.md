@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.2] - 2026-10-14
+
+Release plumbing. No change to the store or the MCP tools.
+
+### Fixed
+- The `ltm` binaries bundled in the `.vsix` reported `version dev` in
+  `ltm doctor`: `extension/scripts/build-bins.sh` did not pass
+  `-X main.Version`. They now carry the extension version.
+
+### Changed
+- `extension/package.json` is the single source of the version; the Makefile
+  reads it instead of keeping its own copy.
+- The release workflow fails early if the tag does not match
+  `extension/package.json`.
+- CI and release jobs are pinned to `ubuntu-24.04` instead of `ubuntu-latest`
+  (which moves to Ubuntu 26 on 2026-10-19).
+- CI checks `gofmt`; the Go sources were reformatted (whitespace only).
+
 ## [0.9.1] - 2026-10-14
 
 Fix for fresh installs. Store-only change, no schema migration.

@@ -316,7 +316,8 @@ type scoredHit struct {
 // lower amplifies rank differences, higher flattens them).
 //
 // Each (scope, key) gets an RRF score of:
-//   sum over sources of 1 / (k + 1-based rank in that source)
+//
+//	sum over sources of 1 / (k + 1-based rank in that source)
 //
 // Hits that appear in only one source contribute only that source's
 // term, so a strong vector hit can still win over an absent-from-FTS
@@ -414,7 +415,7 @@ func (s *Store) SetEmbedding(ctx context.Context, scope, key string, vec []float
 type ReembedResult struct {
 	Scanned     int      `json:"scanned"`
 	Embedded    int      `json:"embedded"`
-	Skipped     int      `json:"skipped"`     // already had an embedding (and --force not set)
+	Skipped     int      `json:"skipped"` // already had an embedding (and --force not set)
 	Errors      int      `json:"errors"`
 	ErrorDetail []string `json:"error_detail,omitempty"`
 }
