@@ -16,7 +16,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest, windows-latest]
+        # The server matrix tracks ubuntu-latest on purpose: it surfaces a
+        # runner image change here first, while release.yml stays pinned.
+        # Its job name is also a required status check on main.
+        os: [ubuntu-latest, macos-latest, windows-latest]
         go: ['1.22.x', '1.23.x']
         # Go 1.22's darwin linker emits test binaries without an LC_UUID load
         # command, which the dyld on current `macos-latest` images aborts

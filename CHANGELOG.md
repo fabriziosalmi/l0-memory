@@ -18,8 +18,9 @@ Release plumbing. No change to the store or the MCP tools.
   reads it instead of keeping its own copy.
 - The release workflow fails early if the tag does not match
   `extension/package.json`.
-- CI and release jobs are pinned to `ubuntu-24.04` instead of `ubuntu-latest`
-  (which moves to Ubuntu 26 on 2026-10-19).
+- Release and deploy jobs are pinned to `ubuntu-24.04` instead of
+  `ubuntu-latest` (which moves to Ubuntu 26 on 2026-10-19). The CI server
+  matrix keeps `ubuntu-latest` so an image change shows up there first.
 - CI checks `gofmt`; the Go sources were reformatted (whitespace only).
 
 ## [0.9.1] - 2026-10-14
