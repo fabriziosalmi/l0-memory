@@ -14,6 +14,7 @@ All memories are stored in a local SQLite file. This ensures:
 - **ACID Compliance:** Data integrity is guaranteed.
 - **Performance:** Fast lookups and full-text search.
 - **Portability:** The database is just a single file.
+- **Concurrent access:** WAL mode, a busy timeout and immediate-lock transactions let several `ltm` processes (MCP hosts, the VSCode extension, hooks, the CLI) share the same file. Opening a brand-new store is retried with backoff if another process is initialising it at the same moment.
 
 ### 3. VS Code Extension
 Provides a graphical interface to interact with the memories, including a specialized TreeView and a D3.js knowledge graph visualizer.
